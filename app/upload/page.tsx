@@ -10,7 +10,7 @@ export default function UploadPage() {
   const supabase = createClient()
   const router = useRouter()
 
-  const handleUpload = async () => {
+  /*const handleUpload = async () => {
     if (!file || !caption) return
     setUploading(true)
 
@@ -59,7 +59,70 @@ export default function UploadPage() {
     } finally {
       setUploading(false)
     }
+  }*/
+  const handleUpload = async () => {
+  if (!file || !caption) return
+  setUploading(true)
+
+  try {
+    const { data } = await supabase.auth.getSession()
+    const user = data.session?.user
+    if (!user) throw new Error("Not authenticated")
+
+    const timestamp = Math.round(Date.now() / 1000)
+    const folder = 'videos'
+
+    const signRes = await fetch('/api/upload/sign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paramsToSign: { timestamp, folder } })
+    })
+
+    const { signature } = await signRes.json()
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('api_key', process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY!)
+    formData.append('timestamp', timestamp.toString())
+    formData.append('signature', signature)
+    formData.append('folder', folder)
+
+    const uploadRes = await fetch(
+      `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/video/upload`,
+      {
+        method: 'POST',
+        body: formData
+      }
+    )
+
+    if (!uploadRes.ok) {
+      throw new Error(await uploadRes.text())
+    }
+
+    const cloudData = await uploadRes.json()
+
+    if (!cloudData.secure_url) {
+      throw new Error("Upload failed")
+    }
+
+    const { error } = await supabase.from('videos').insert({
+      user_id: user.id,
+      video_url: cloudData.secure_url,
+      caption,
+      duration: cloudData.duration
+    })
+
+    if (error) throw error
+
+    router.push('/')
+
+  } catch (e) {
+    console.error(e)
+    alert('Upload failed')
+  } finally {
+    setUploading(false)
   }
+}
 
   return (
     <div className="p-6 pt-10 text-white h-full">
