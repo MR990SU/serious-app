@@ -1,31 +1,37 @@
 'use client'
 import Link from 'next/link'
-import { Home, PlusSquare, User } from 'lucide-react'
+import { Home, Compass, Plus, Heart, User } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 
 export default function BottomNav() {
   const pathname = usePathname()
 
-  // Don't show on login page
   if (pathname === '/login') return null
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 flex justify-around items-center z-50">
-      <Link href="/" className={clsx("p-2", pathname === '/' ? "text-white" : "text-gray-500")}>
-        <Home size={28} />
-      </Link>
-      
-      <Link href="/upload" className="p-2">
-        <div className="bg-white rounded-lg px-4 py-1">
-          <PlusSquare size={24} className="text-black" />
-        </div>
-      </Link>
+    <div className="fixed bottom-0 left-0 right-0 pb-safe z-50">
+      {/* Background with blur */}
+      <div className="absolute inset-0 glass-dark border-t-0 border-b-0 border-x-0" />
 
-      {/* Note: In real app, fetch user ID to link to own profile */}
-      <Link href="/profile/me" className={clsx("p-2", pathname.includes('/profile') ? "text-white" : "text-gray-500")}>
-        <User size={28} />
-      </Link>
+      <div className="relative flex justify-around items-center h-16 px-2">
+        <Link href="/" className={clsx("flex flex-col items-center justify-center w-12 h-12 transition-colors", pathname === '/' ? "text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)]" : "text-white/50")}>
+          <Home size={24} className={pathname === '/' ? "fill-white" : ""} />
+        </Link>
+
+        {/* Create Button Centered */}
+        <Link href="/upload" className="flex flex-col items-center justify-center w-14 h-14 -mt-4 relative group">
+          <div className="absolute inset-0 bg-electric rounded-2xl blur-md opacity-60 group-hover:opacity-100 transition-opacity" />
+          <div className="relative bg-electric rounded-2xl w-12 h-12 flex items-center justify-center text-white font-bold shadow-lg">
+            <Plus size={28} />
+          </div>
+        </Link>
+
+        {/* Profile */}
+        <Link href="/profile/me" className={clsx("flex flex-col items-center justify-center w-12 h-12 transition-colors", pathname.includes('/profile') ? "text-white" : "text-white/50")}>
+          <User size={24} />
+        </Link>
+      </div>
     </div>
   )
 }

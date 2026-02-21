@@ -13,3 +13,12 @@ export interface Video {
   likes_count: number
   users: Profile // Joined from Supabase
 }
+
+export interface Comment {
+  id: string
+  video_id: string
+  user_id: string
+  content: string
+  created_at: string
+  users: Profile
+}
