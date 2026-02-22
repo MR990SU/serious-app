@@ -15,13 +15,35 @@ export default function VideoFeed({ initialVideos }: Props) {
   const BATCH_SIZE = 3
 
   const fetchVideos = async () => {
-    const { data, error } = await supabase
-      .from('videos')
-      .select('id, user_id, video_url, thumbnail_url, caption, created_at, likes_count, views_count, users(id, username, avatar_url)')
-      .order('created_at', { ascending: false })
+    let { data, error } = await supabase
+      .from('trending_videos')
+      .select('*, users:profiles(id, username, avatar_url)')
       .range(page * BATCH_SIZE, (page + 1) * BATCH_SIZE - 1)
 
-    if (error) console.error(error)
+    // If fetch from trending fails or returns no data, fallback to normal query
+    if (error || !data || data.length === 0) {
+      if (error && Object.keys(error).length > 0) {
+        console.warn("VideoFeed Trending fetch warning:", (error as any).message || error)
+      }
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('videos')
+        .select('*, users:profiles(id, username, avatar_url)')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(page * BATCH_SIZE, (page + 1) * BATCH_SIZE - 1)
+
+      if (fallbackError && Object.keys(fallbackError).length > 0) {
+        console.error("Fallback videos fetch error:", (fallbackError as any).message || fallbackError)
+      }
+      data = fallbackData
+    } else {
+      // Map video_id to standard format from the materialized view
+      data = data.map((v: any) => ({ ...v, id: v.video_id }))
+    }
+
+    if (error && Object.keys(error).length > 0 && (!data || data.length === 0)) {
+      console.error("Final fetch error:", (error as any).message || error)
+    }
 
     if (data && data.length > 0) {
       // Supabase sometimes returns joined tables as arrays, map it to the expected single Profile object
@@ -39,7 +61,12 @@ export default function VideoFeed({ initialVideos }: Props) {
     }
   }
 
-  // Removed empty useEffect for initial fetch since we use getServerSideProps/Server Components
+  // Recover if server-side props totally failed
+  useEffect(() => {
+    if (videos.length === 0) {
+      fetchVideos()
+    }
+  }, [])
 
   return (
     <div className="h-full w-full overflow-y-scroll snap-y snap-mandatory no-scrollbar">

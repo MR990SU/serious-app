@@ -1,29 +1,30 @@
 'use client'
 import { Heart, MessageCircle, Share2, Plus, Disc3 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 import { useState } from 'react'
 import { Video } from '@/types'
 import Image from 'next/image'
 import { ShareModal } from './ShareModal'
+import { toggleLike } from '@/app/actions'
 
 export default function ActionButtons({ video }: { video: Video }) {
   const [likes, setLikes] = useState(video.likes_count)
   const [liked, setLiked] = useState(false)
   const [isShareOpen, setIsShareOpen] = useState(false)
-  const supabase = createClient()
 
   const handleLike = async () => {
     // Optimistic UI
     setLiked(!liked)
     setLikes(prev => liked ? prev - 1 : prev + 1)
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    // Call server action
+    const result = await toggleLike(video.id)
 
-    await supabase.rpc('toggle_like', {
-      _video_id: video.id,
-      _user_id: user.id
-    })
+    // If it failed or user wasn't authenticated, we could revert optimistic update here
+    if (result && !result.success) {
+      setLiked(!liked)
+      setLikes(prev => liked ? prev + 1 : prev - 1)
+      // Optionally show a toast or alert to login
+    }
   }
 
   return (

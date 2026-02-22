@@ -41,11 +41,14 @@ export function CommentsSection() {
     const fetchComments = async () => {
         const { data, error } = await supabase
             .from('comments')
-            .select('*, users(id, username, avatar_url)')
+            .select('*, users:profiles(id, username, avatar_url)')
+            .is('deleted_at', null)
             .order('created_at', { ascending: false })
             .limit(10)
 
-        if (error) console.error(error)
+        if (error && Object.keys(error).length > 0) {
+            console.error("Comments fetch error:", (error as any).message || error)
+        }
         if (data) setComments(data as Comment[])
         setLoading(false)
     }

@@ -6,6 +6,7 @@ import ActionButtons from './ActionButtons'
 import Link from 'next/link'
 import { getOptimizedVideoUrl, getOptimizedPosterUrl } from '@/lib/utils/video-utils'
 import { Music, Volume2, VolumeX } from 'lucide-react'
+import { incrementViewCount } from '@/app/actions'
 
 interface Props {
   video: Video
@@ -17,6 +18,7 @@ export default function VideoItem({ video, index, loadMore }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [isMuted, setIsMuted] = useState(false) // Try unmuted by default
+  const viewLogged = useRef(false) // Check to avoid spamming the action
 
   // Observer: Playback tracking
   // Using a 40% threshold prevents strict mathematical misses on desktop viewport sizes
@@ -30,6 +32,10 @@ export default function VideoItem({ video, index, loadMore }: Props) {
     if (!videoRef.current) return
 
     if (isPlaying) {
+      if (!viewLogged.current) {
+        incrementViewCount(video.id)
+        viewLogged.current = true
+      }
       // First attempt to play it with user's preferred mute state
       const playPromise = videoRef.current.play()
 
@@ -81,6 +87,7 @@ export default function VideoItem({ video, index, loadMore }: Props) {
           muted={isMuted}
           preload="metadata"
           onClick={toggleMute}
+          onContextMenu={(e) => e.preventDefault()}
         />
 
         {/* Mute Indicator Toggle */}

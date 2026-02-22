@@ -7,16 +7,34 @@ export const revalidate = 60
 export default async function Home() {
   const supabase = await createClient()
 
-  // Initial server-side fetch to save Supabase egress on frequent page loads
-  const { data: initialVideos } = await supabase
-    .from('videos')
-    .select('id, user_id, video_url, thumbnail_url, caption, created_at, likes_count, views_count, users(id, username, avatar_url)')
-    .order('created_at', { ascending: false })
-    .range(0, 2)
+  // Try trending view first for reels
+  let { data: initialVideos, error } = await supabase
+    .from('trending_videos')
+    .select('*, users:profiles(id, username, avatar_url)')
+    .limit(4)
+
+  if (error || !initialVideos || initialVideos.length === 0) {
+    if (error && Object.keys(error).length > 0) {
+      console.warn("Trending fetch warning:", (error as any).message || error)
+    }
+    // Fallback to standard fetch if trending is empty
+    const { data: fallbackVideos, error: fallbackError } = await supabase
+      .from('videos')
+      .select('*, users:profiles(id, username, avatar_url)')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(0, 3)
+
+    if (fallbackError && Object.keys(fallbackError).length > 0) {
+      console.error("Fallback Error:", (fallbackError as any).message || fallbackError)
+    }
+    initialVideos = fallbackVideos
+  }
 
   // Format array if needed
   const formattedVideos = initialVideos?.map((v: any) => ({
     ...v,
+    id: v.video_id || v.id, // Support materialized view ID mapping
     users: Array.isArray(v.users) ? v.users[0] : v.users
   })) || []
 
