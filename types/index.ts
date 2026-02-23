@@ -12,6 +12,7 @@ export interface Video {
   video_url: string
   caption: string
   likes_count: number
+  comments_count: number
   view_count: number
   deleted_at?: string | null
   users: Profile // Joined from Supabase
@@ -21,7 +22,10 @@ export interface Comment {
   id: string
   video_id: string
   user_id: string
+  parent_id?: string | null
   content: string
+  likes_count: number
+  reply_count: number
   created_at: string
   deleted_at?: string | null
   users: Profile

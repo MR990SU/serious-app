@@ -2,6 +2,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { useInView } from 'react-intersection-observer'
 import { Video } from '@/types'
+import { useVideoStore } from '@/lib/store/useVideoStore'
 import ActionButtons from './ActionButtons'
 import Link from 'next/link'
 import { getOptimizedVideoUrl, getOptimizedPosterUrl } from '@/lib/utils/video-utils'
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function VideoItem({ video, index, loadMore }: Props) {
+  const { setActiveVideo } = useVideoStore()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [isMuted, setIsMuted] = useState(false) // Try unmuted by default
@@ -32,6 +34,7 @@ export default function VideoItem({ video, index, loadMore }: Props) {
     if (!videoRef.current) return
 
     if (isPlaying) {
+      setActiveVideo(video.id, video.likes_count, video.comments_count || 0)
       if (!viewLogged.current) {
         incrementViewCount(video.id)
         viewLogged.current = true
@@ -102,9 +105,9 @@ export default function VideoItem({ video, index, loadMore }: Props) {
         <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10 pointer-events-none" />
 
         {/* Overlay: Caption & User */}
-        <div className="absolute bottom-[20px] md:bottom-8 left-4 right-20 z-20">
+        <div className="absolute bottom-[80px] md:bottom-8 left-4 right-20 z-20">
           <Link href={`/profile/${video.users.id}`} className="font-bold text-lg hover:underline flex items-center gap-2 mb-2">
-            {video.users.username}
+            @{video.users.id.substring(0, 10)}
           </Link>
           <div className="text-sm">
             <p className={`${isExpanded ? '' : 'line-clamp-2'} transition-all`}>
@@ -117,13 +120,12 @@ export default function VideoItem({ video, index, loadMore }: Props) {
             )}
           </div>
 
-          {/* Scrolling Music Track Info */}
+          {/* Scrolling Music Track Info / Caption */}
           <div className="flex items-center gap-2 mt-4 text-sm font-semibold text-white/80 overflow-hidden w-64 rounded-full px-3 py-1 glass max-w-full">
             <Music size={16} className="shrink-0 text-brand-secondary animate-pulse" />
             <div className="whitespace-nowrap overflow-hidden relative w-full">
               <p className="animate-[scroll_10s_linear_infinite] inline-block">
-                {/* Fake sound name for demo */}
-                Original Sound - @{video.users.username} •
+                {video.caption ? `${video.caption} • ` : `Original Sound - @${video.users.id.substring(0, 10)} • `}
               </p>
             </div>
           </div>

@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { toggleFollow } from '@/app/actions'
 import Link from 'next/link'
 import { Grid, Heart, LogOut } from 'lucide-react'
+import { EditProfileModal } from '@/components/profile/EditProfileModal'
 
 export default function ProfilePage() {
     const [profile, setProfile] = useState<Profile | null>(null)
@@ -16,6 +17,7 @@ export default function ProfilePage() {
     const [isFollowing, setIsFollowing] = useState(false)
     const [isSelf, setIsSelf] = useState(false)
     const [loading, setLoading] = useState(true)
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false)
 
     const params = useParams()
     const router = useRouter()
@@ -125,16 +127,15 @@ export default function ProfilePage() {
         <div className="min-h-screen bg-black text-white pt-safe pb-20 md:pb-0 overflow-y-auto">
 
             {/* Header */}
-            <div className="sticky top-0 bg-black/80 backdrop-blur-md p-4 flex justify-between items-center z-10">
-                <h1 className="text-xl font-bold mx-auto">{profile.username}</h1>
-                {isSelf && (
-                    <button onClick={handleLogout} className="absolute right-4 top-4 text-gray-400 hover:text-white">
+            {isSelf && (
+                <div className="sticky top-0 bg-transparent flex justify-end p-4 z-10 pointer-events-none">
+                    <button onClick={handleLogout} className="text-gray-400 hover:text-white pointer-events-auto bg-black/50 p-2 rounded-full backdrop-blur-md">
                         <LogOut size={24} />
                     </button>
-                )}
-            </div>
+                </div>
+            )}
 
-            <div className="max-w-xl mx-auto flex flex-col items-center px-4 pt-6 pb-2 border-b border-gray-900">
+            <div className={`max-w-xl mx-auto flex flex-col items-center px-4 mb-4 ${isSelf ? 'pt-0' : 'pt-10'}`}>
                 {/* Avatar */}
                 <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-800 border-[3px] border-gray-700 mb-4">
                     {profile.avatar_url ? (
@@ -146,6 +147,10 @@ export default function ProfilePage() {
 
                 <h2 className="font-bold text-lg">@{profile.username}</h2>
                 {profile.full_name && <p className="text-gray-400 text-sm mt-1">{profile.full_name}</p>}
+
+                {profile.bio && (
+                    <p className="mt-3 mb-1 text-center text-sm px-4 max-w-sm whitespace-pre-wrap">{profile.bio}</p>
+                )}
 
                 {/* Stats */}
                 <div className="flex gap-8 mt-6 w-full justify-center">
@@ -166,9 +171,9 @@ export default function ProfilePage() {
                 {/* Action Buttons */}
                 <div className="mt-6 w-full flex justify-center pb-4">
                     {isSelf ? (
-                        <Link href="/profile/edit" className="px-12 py-3 bg-gray-800 font-semibold rounded-lg hover:bg-gray-700 transition w-full text-center">
+                        <button onClick={() => setIsEditModalOpen(true)} className="px-12 py-3 bg-gray-800 font-semibold rounded-lg hover:bg-gray-700 transition w-full text-center">
                             Edit profile
-                        </Link>
+                        </button>
                     ) : (
                         <button
                             onClick={handleFollowChange}
@@ -179,9 +184,6 @@ export default function ProfilePage() {
                     )}
                 </div>
 
-                {profile.bio && (
-                    <p className="mt-2 mb-4 text-center text-sm px-4">{profile.bio}</p>
-                )}
             </div>
 
             {/* Grid Tabs */}
@@ -195,7 +197,7 @@ export default function ProfilePage() {
             </div>
 
             {/* Videos Grid */}
-            <div className="grid grid-cols-3 gap-[1px] max-w-xl mx-auto">
+            <div className="grid grid-cols-3 gap-[1px] max-w-xl mx-auto bg-black">
                 {videos.map((video) => (
                     <Link href={`/?v=${video.id}`} key={video.id} className="relative aspect-[3/4] bg-gray-900 group">
                         <video src={video.video_url} className="w-full h-full object-cover" muted playsInline />
@@ -207,12 +209,18 @@ export default function ProfilePage() {
                     </Link>
                 ))}
                 {videos.length === 0 && (
-                    <div className="col-span-3 text-center text-gray-500 py-20">
+                    <div className="col-span-3 text-center text-gray-500 py-20 bg-black">
                         No videos yet
                     </div>
                 )}
             </div>
 
+            <EditProfileModal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                currentBio={profile.bio || ''}
+                currentAvatar={profile.avatar_url || null}
+            />
         </div>
     )
 }

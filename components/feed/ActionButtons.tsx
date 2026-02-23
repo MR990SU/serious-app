@@ -5,16 +5,27 @@ import { Video } from '@/types'
 import Image from 'next/image'
 import { ShareModal } from './ShareModal'
 import { toggleLike } from '@/app/actions'
+import { useVideoStore } from '@/lib/store/useVideoStore'
 
 export default function ActionButtons({ video }: { video: Video }) {
-  const [likes, setLikes] = useState(video.likes_count)
+  const { activeVideoId, activeVideoLikes, activeVideoComments, incrementLikeCount, decrementLikeCount } = useVideoStore()
+  const isActive = activeVideoId === video.id
+
+  const [localLikes, setLocalLikes] = useState(video.likes_count)
   const [liked, setLiked] = useState(false)
   const [isShareOpen, setIsShareOpen] = useState(false)
+
+  const displayLikes = isActive ? activeVideoLikes : localLikes
+  const displayComments = isActive ? activeVideoComments : (video.comments_count || 0)
 
   const handleLike = async () => {
     // Optimistic UI
     setLiked(!liked)
-    setLikes(prev => liked ? prev - 1 : prev + 1)
+    if (isActive) {
+      liked ? decrementLikeCount() : incrementLikeCount()
+    } else {
+      setLocalLikes(prev => liked ? prev - 1 : prev + 1)
+    }
 
     // Call server action
     const result = await toggleLike(video.id)
@@ -22,14 +33,18 @@ export default function ActionButtons({ video }: { video: Video }) {
     // If it failed or user wasn't authenticated, we could revert optimistic update here
     if (result && !result.success) {
       setLiked(!liked)
-      setLikes(prev => liked ? prev + 1 : prev - 1)
+      if (isActive) {
+        liked ? incrementLikeCount() : decrementLikeCount()
+      } else {
+        setLocalLikes(prev => liked ? prev + 1 : prev - 1)
+      }
       // Optionally show a toast or alert to login
     }
   }
 
   return (
     <>
-      <div className="absolute bottom-20 right-4 flex flex-col gap-5 items-center z-20 glass-dark rounded-full py-4 px-2">
+      <div className="absolute bottom-20 right-4 flex flex-col gap-5 items-center z-20 rounded-full py-4 px-2">
 
         {/* Avatar with Follow Button */}
         <div className="relative mb-2 shrink-0">
@@ -49,14 +64,14 @@ export default function ActionButtons({ video }: { video: Video }) {
           <div className={`p-2 rounded-full transition-transform ${liked ? 'scale-110' : 'group-hover:scale-110'} ${liked ? 'text-brand-accent' : 'text-white'}`}>
             <Heart size={30} fill={liked ? "currentColor" : "none"} className={liked ? "drop-shadow-[0_0_8px_rgba(236,72,153,0.8)]" : ""} />
           </div>
-          <span className="text-xs font-bold mt-1 text-white/90">{likes}</span>
+          <span className="text-xs font-bold mt-1 text-white/90">{displayLikes}</span>
         </button>
 
         <button className="flex flex-col items-center group shrink-0">
           <div className="p-2 rounded-full transition-transform group-hover:scale-110">
             <MessageCircle size={30} className="text-white fill-white/20" />
           </div>
-          <span className="text-xs font-bold mt-1 text-white/90">0</span>
+          <span className="text-xs font-bold mt-1 text-white/90">{displayComments}</span>
         </button>
 
         <button

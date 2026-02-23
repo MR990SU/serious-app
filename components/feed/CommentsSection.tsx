@@ -1,128 +1,255 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Comment } from '@/types'
-
-// Note: Since we are in the layout, we don't naturally know which video is active in view.
-// In a full implementation, you'd use a global store (Zustand/Context) to track the 'activeVideoId'
-// For this demo structure, we will fetch the most recent comments globally.
+import { useVideoStore } from '@/lib/store/useVideoStore'
+import { deleteComment, toggleCommentLike } from '@/app/actions'
+import { Heart, Trash2, Reply } from 'lucide-react'
 
 export function CommentsSection() {
+    const { activeVideoId, incrementCommentCount, setCommentCount, decrementLikeCount } = useVideoStore()
     const [comments, setComments] = useState<Comment[]>([])
-    const [loading, setLoading] = useState(true)
+    const [loading, setLoading] = useState(false)
     const [newComment, setNewComment] = useState('')
+    const [replyingTo, setReplyingTo] = useState<{ id: string, username: string, parentId: string | null } | null>(null)
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+    const [localLikes, setLocalLikes] = useState<{ [key: string]: boolean }>({})
+    const inputRef = useRef<HTMLInputElement>(null)
     const supabase = createClient()
 
     useEffect(() => {
-        fetchComments()
+        if (!activeVideoId) {
+            setComments([])
+            return
+        }
 
+        const fetchCommentsAndUser = async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (user) setCurrentUserId(user.id)
+
+            setLoading(true)
+            const { data, count, error } = await supabase
+                .from('comments')
+                .select('*, users:profiles(id, username, avatar_url)', { count: 'exact' })
+                .eq('video_id', activeVideoId)
+                .is('deleted_at', null)
+                .order('created_at', { ascending: false })
+                .limit(50)
+
+            if (!error && data) {
+                setComments(data as Comment[])
+                if (count !== null) setCommentCount(count)
+
+                // Fetch user likes for these comments
+                if (user) {
+                    const commentIds = data.map(c => c.id)
+                    if (commentIds.length > 0) {
+                        const { data: likesData } = await supabase
+                            .from('comment_likes')
+                            .select('comment_id')
+                            .in('comment_id', commentIds)
+                            .eq('user_id', user.id)
+
+                        if (likesData) {
+                            const likesMap: { [key: string]: boolean } = {}
+                            likesData.forEach(l => likesMap[l.comment_id] = true)
+                            setLocalLikes(likesMap)
+                        }
+                    }
+                }
+            }
+            setLoading(false)
+        }
+
+        // Initial Fetch
+        fetchCommentsAndUser()
+
+        // Realtime Subscription targeted to this exact video
         const channel = supabase
-            .channel('realtime:comments')
+            .channel(`realtime:comments:${activeVideoId}`)
             .on(
                 'postgres_changes',
                 {
                     event: 'INSERT',
                     schema: 'public',
-                    table: 'comments'
+                    table: 'comments',
+                    filter: `video_id=eq.${activeVideoId}`
                 },
-                () => {
-                    fetchComments()
-                }
+                () => fetchCommentsAndUser()
             )
             .subscribe()
 
         return () => {
             supabase.removeChannel(channel)
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    const fetchComments = async () => {
-        const { data, error } = await supabase
-            .from('comments')
-            .select('*, users:profiles(id, username, avatar_url)')
-            .is('deleted_at', null)
-            .order('created_at', { ascending: false })
-            .limit(10)
-
-        if (error && Object.keys(error).length > 0) {
-            console.error("Comments fetch error:", (error as any).message || error)
-        }
-        if (data) setComments(data as Comment[])
-        setLoading(false)
-    }
+    }, [activeVideoId])
 
     const handlePost = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!newComment.trim()) return
+        if (!newComment.trim() || !activeVideoId) return
 
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return alert('Must be logged in to comment')
 
-        // For demo, we are posting a global comment without a specific video_id context from the layout
-        // Assuming video_id is required, we would fetch the first video to attach it to,
-        // or rely on a global state. We'll simulate error handling here.
-
-        // Attempt logic: Find a recent video to attach to if activeVideoId isn't global
-        const { data: videos } = await supabase.from('videos').select('id').limit(1)
-        if (!videos || videos.length === 0) return
+        const parentId = replyingTo?.parentId || replyingTo?.id || null // Force strictly 1 level deep. If replying to a reply, use its parent.
 
         const { error } = await supabase
             .from('comments')
             .insert({
-                video_id: videos[0].id,
+                video_id: activeVideoId,
                 user_id: user.id,
-                content: newComment.trim()
+                content: newComment.trim(),
+                parent_id: parentId
             })
 
         if (!error) {
             setNewComment('')
-            fetchComments()
+            setReplyingTo(null)
+            incrementCommentCount() // Sync Right Bar to ActionButtons instantly
+            // Realtime push handles updating the actual UI feed
         }
     }
 
+    const handleDelete = async (commentId: string) => {
+        if (!confirm('Are you sure you want to delete this comment?')) return
+
+        // Optimistic UI Removal
+        setComments(prev => prev.filter(c => c.id !== commentId && c.parent_id !== commentId))
+        await deleteComment(commentId)
+    }
+
+    const handleLike = async (commentId: string, currentLikes: number) => {
+        const isLiked = localLikes[commentId]
+
+        // Optimistic UI
+        setLocalLikes(prev => ({ ...prev, [commentId]: !isLiked }))
+        setComments(prev => prev.map(c => {
+            if (c.id === commentId) {
+                return { ...c, likes_count: isLiked ? c.likes_count - 1 : c.likes_count + 1 }
+            }
+            return c
+        }))
+
+        const result = await toggleCommentLike(commentId)
+        if (result && !result.success) {
+            // Revert
+            setLocalLikes(prev => ({ ...prev, [commentId]: isLiked }))
+            setComments(prev => prev.map(c => {
+                if (c.id === commentId) {
+                    return { ...c, likes_count: currentLikes }
+                }
+                return c
+            }))
+        }
+    }
+
+    // Group comments logically: Parents first, then their direct children beneath them
+    const topLevelComments = comments.filter(c => !c.parent_id)
+    const replies = comments.filter(c => c.parent_id)
+
+    const groupedComments = topLevelComments.flatMap(parent => {
+        const children = replies.filter(r => r.parent_id === parent.id).reverse() // Older replies first if desired
+        return [parent, ...children]
+    })
+
     return (
-        <section className="flex flex-col h-full overflow-hidden">
-            <h3 className="font-bold text-gray-400 mb-4 px-2 shrink-0">Recent Comments</h3>
+        <section className="flex flex-col h-full overflow-hidden text-sm">
+            <h3 className="font-bold text-gray-400 mb-4 px-2 shrink-0">
+                {activeVideoId ? 'Comments' : 'Scroll to view comments'}
+            </h3>
 
             <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col gap-4 pb-4">
-                {loading ? (
+                {!activeVideoId ? (
+                    <div className="text-gray-500 text-xs px-2 opacity-50 text-center mt-10">Waiting for video...</div>
+                ) : loading ? (
                     <div className="text-gray-500 text-xs px-2 animate-pulse">Loading...</div>
-                ) : comments.length === 0 ? (
-                    <div className="text-gray-500 text-xs px-2">No comments yet.</div>
+                ) : groupedComments.length === 0 ? (
+                    <div className="text-gray-500 text-xs px-2">Be the first to comment.</div>
                 ) : (
-                    comments.map(c => (
-                        <div key={c.id} className="flex gap-3 px-2">
-                            <div className="w-8 h-8 rounded-full bg-gray-700 overflow-hidden shrink-0 mt-1">
-                                {c.users?.avatar_url ? (
-                                    <img src={c.users.avatar_url} alt="" className="w-full h-full object-cover" />
-                                ) : (
-                                    <div className="w-full h-full bg-gradient-to-tr from-brand-secondary to-brand-primary" />
+                    groupedComments.map(c => {
+                        const isReply = !!c.parent_id;
+                        const isOwner = c.user_id === currentUserId;
+                        const isLiked = localLikes[c.id];
+
+                        return (
+                            <div key={c.id} className={`flex flex-col gap-1 px-2 ${isReply ? 'ml-10 mt-1 relative' : 'mt-2'}`}>
+                                {isReply && (
+                                    <div className="absolute -left-6 top-0 bottom-4 w-4 border-l-2 border-b-2 border-white/10 rounded-bl-xl" />
                                 )}
+                                <div className="flex gap-3">
+                                    <div className={`rounded-full bg-gray-700 overflow-hidden shrink-0 mt-1 ${isReply ? 'w-6 h-6' : 'w-8 h-8'}`}>
+                                        {c.users?.avatar_url ? (
+                                            <img src={c.users.avatar_url} alt="" className="w-full h-full object-cover" />
+                                        ) : (
+                                            <div className="w-full h-full bg-gradient-to-tr from-brand-secondary to-brand-primary" />
+                                        )}
+                                    </div>
+                                    <div className="flex flex-col flex-1">
+                                        <span className="font-bold border-gray-400 text-xs text-white/70">@{c.users?.username || 'user'}</span>
+                                        <p className="text-sm mt-0.5 break-words text-white/90 leading-tight">
+                                            {c.content}
+                                        </p>
+
+                                        {/* Interaction Buttons */}
+                                        <div className="flex items-center gap-4 mt-2 text-xs text-white/50 font-semibold">
+                                            <button
+                                                onClick={() => handleLike(c.id, c.likes_count)}
+                                                className={`flex items-center gap-1 hover:text-brand-accent transition-colors ${isLiked ? 'text-brand-accent' : ''}`}
+                                            >
+                                                <Heart size={12} fill={isLiked ? "currentColor" : "none"} />
+                                                <span>{c.likes_count > 0 ? c.likes_count : 'Like'}</span>
+                                            </button>
+
+                                            <button
+                                                onClick={() => {
+                                                    setReplyingTo({ id: c.id, username: c.users?.username || 'user', parentId: c.parent_id || null })
+                                                    inputRef.current?.focus()
+                                                }}
+                                                className="flex items-center gap-1 hover:text-white transition-colors"
+                                            >
+                                                <Reply size={12} />
+                                                <span>Reply</span>
+                                            </button>
+
+                                            {isOwner && (
+                                                <button
+                                                    onClick={() => handleDelete(c.id)}
+                                                    className="flex items-center gap-1 hover:text-red-500 transition-colors ml-auto"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="flex flex-col">
-                                <span className="font-bold border-gray-400 text-xs text-white/70">@{c.users?.username || 'user'}</span>
-                                <p className="text-sm mt-0.5">{c.content}</p>
-                            </div>
-                        </div>
-                    ))
+                        )
+                    })
                 )}
             </div>
 
             <form onSubmit={handlePost} className="shrink-0 mt-4 px-2">
+                {replyingTo && (
+                    <div className="flex items-center justify-between bg-white/5 px-3 py-1.5 rounded-t-lg text-xs text-white/70 border-b border-white/10">
+                        <span>Replying to <span className="font-bold text-brand-secondary">@{replyingTo.username}</span></span>
+                        <button type="button" onClick={() => setReplyingTo(null)} className="hover:text-white">Cancel</button>
+                    </div>
+                )}
                 <div className="relative">
                     <input
+                        ref={inputRef}
                         type="text"
-                        placeholder="Add comment..."
-                        className="w-full bg-white/10 border border-white/20 rounded-full py-2 px-4 text-sm focus:outline-none focus:border-brand-primary transition-colors pr-12"
+                        disabled={!activeVideoId}
+                        placeholder={activeVideoId ? "Add comment..." : "No video active"}
+                        className={`w-full bg-white/10 border border-white/20 py-2 px-4 text-sm focus:outline-none focus:border-brand-primary transition-colors pr-12 disabled:opacity-50 ${replyingTo ? 'rounded-b-lg' : 'rounded-full'}`}
                         value={newComment}
                         onChange={(e) => setNewComment(e.target.value)}
                     />
                     <button
                         type="submit"
-                        disabled={!newComment.trim()}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-brand-secondary font-bold text-sm disabled:opacity-50"
+                        disabled={!newComment.trim() || !activeVideoId}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-brand-secondary font-bold text-sm disabled:opacity-50 p-2"
                     >
                         Post
                     </button>

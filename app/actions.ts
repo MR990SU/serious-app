@@ -2,6 +2,13 @@
 
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { v2 as cloudinary } from 'cloudinary'
+
+cloudinary.config({
+    cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+})
 
 // Helper to get authenticated server client
 const getSupabase = async () => {
@@ -103,5 +110,93 @@ export async function toggleFollow(targetUserId: string) {
         })
 
         return { success: true, isFollowing: true }
+    }
+}
+
+export async function updateProfile(avatarUrl: string | null, bio: string | null) {
+    const supabase = await getSupabase()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) return { success: false, error: 'Unauthorized' }
+
+    try {
+        await supabase
+            .from('profiles')
+            .update({
+                avatar_url: avatarUrl,
+                bio: bio
+            })
+            .eq('id', user.id)
+
+        return { success: true }
+    } catch (error: any) {
+        return { success: false, error: error.message }
+    }
+}
+
+export async function deleteCloudinaryImage(publicId: string) {
+    // Only allow secure server-side execution
+    try {
+        await cloudinary.uploader.destroy(publicId)
+        return { success: true }
+    } catch (error: any) {
+        console.error('Failed to delete from Cloudinary:', error)
+        return { success: false, error: error.message }
+    }
+}
+
+export async function deleteComment(commentId: string) {
+    const supabase = await getSupabase()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) return { success: false, error: 'Not authenticated' }
+
+    try {
+        // Soft delete by setting deleted_at
+        // Due to RLS, this will only succeed if auth.uid() = user_id (the owner)
+        const { error } = await supabase
+            .from('comments')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('id', commentId)
+            .eq('user_id', user.id) // Extra safety check
+
+        if (error) throw error
+        return { success: true }
+    } catch (error: any) {
+        return { success: false, error: error.message }
+    }
+}
+
+export async function toggleCommentLike(commentId: string) {
+    const supabase = await getSupabase()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) return { success: false, error: 'Not authenticated' }
+
+    try {
+        // Check if like exists
+        const { data: existingLike } = await supabase
+            .from('comment_likes')
+            .select('id')
+            .eq('comment_id', commentId)
+            .eq('user_id', user.id)
+            .single()
+
+        if (existingLike) {
+            // Unlike
+            const { error } = await supabase.from('comment_likes').delete().eq('id', existingLike.id)
+            if (error) throw error
+            return { success: true, liked: false }
+        } else {
+            // Like
+            const { error } = await supabase.from('comment_likes').insert({
+                comment_id: commentId,
+                user_id: user.id
+            })
+            if (error) throw error
+            return { success: true, liked: true }
+        }
+    } catch (error: any) {
+        return { success: false, error: error.message }
     }
 }
