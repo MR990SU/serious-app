@@ -3,16 +3,11 @@
 @theme inline {
   --color-background: #050505;
   --color-foreground: #F3F4F6;
-  /* Soft off-white */
 
   --color-brand-primary: #8B5CF6;
-  /* Purple */
   --color-brand-secondary: #06B6D4;
-  /* Cyan/Teal */
   --color-brand-accent: #EC4899;
-  /* Pink */
 
-  /* Gradients */
   --color-electric-gradient-from: #8B5CF6;
   --color-electric-gradient-via: #EC4899;
   --color-electric-gradient-to: #06B6D4;
@@ -32,8 +27,7 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   overscroll-behavior-y: none;
-  /* Prevents bounce */
-  font-family: Arial, Helvetica, sans-serif;
+  /* font-family intentionally NOT set here — Inter is injected via next/font in layout.tsx */
 }
 
 @layer utilities {
@@ -62,7 +56,5 @@ body {
 /* Hide scrollbar for IE, Edge and Firefox */
 .no-scrollbar {
   -ms-overflow-style: none;
-  /* IE and Edge */
   scrollbar-width: none;
-  /* Firefox */
 }

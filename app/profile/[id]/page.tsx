@@ -3,10 +3,12 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Profile, Video } from '@/types'
 import { useParams, useRouter } from 'next/navigation'
-import { toggleFollow } from '@/app/actions'
+import { toggleFollow } from '@/app/actions/profile-actions'
 import Link from 'next/link'
+import Image from 'next/image'
 import { Grid, Heart, LogOut } from 'lucide-react'
 import { EditProfileModal } from '@/components/profile/EditProfileModal'
+import { getThumbnailUrl } from '@/lib/utils/video-utils'
 
 export default function ProfilePage() {
     const [profile, setProfile] = useState<Profile | null>(null)
@@ -196,11 +198,17 @@ export default function ProfilePage() {
                 </div>
             </div>
 
-            {/* Videos Grid */}
+            {/* Videos Grid — uses next/image thumbnails instead of full <video> elements */}
             <div className="grid grid-cols-3 gap-[1px] max-w-xl mx-auto bg-black">
                 {videos.map((video) => (
-                    <Link href={`/?v=${video.id}`} key={video.id} className="relative aspect-[3/4] bg-gray-900 group">
-                        <video src={video.video_url} className="w-full h-full object-cover" muted playsInline />
+                    <Link href={`/?v=${video.id}`} key={video.id} className="relative aspect-[3/4] bg-gray-900 group overflow-hidden">
+                        <Image
+                            src={getThumbnailUrl(video.video_url)}
+                            alt={video.caption || 'Video thumbnail'}
+                            fill
+                            sizes="(max-width: 640px) 33vw, 160px"
+                            className="object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
                         <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity" />
                         <div className="absolute bottom-1 left-2 flex items-center gap-1 text-white text-xs font-bold drop-shadow-md">
                             <svg className="w-3 h-3 stroke-white fill-transparent" viewBox="0 0 24 24" strokeWidth="2"><path d="m2 12 5.25 5L22 4"></path></svg>

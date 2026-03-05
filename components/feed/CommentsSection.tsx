@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Comment } from '@/types'
 import { useVideoStore } from '@/lib/store/useVideoStore'
-import { deleteComment, toggleCommentLike } from '@/app/actions'
+import { deleteComment, toggleCommentLike } from '@/app/actions/comment-actions'
 import { Heart, Trash2, Reply } from 'lucide-react'
 
 export function CommentsSection() {
@@ -41,7 +41,6 @@ export function CommentsSection() {
                 setComments(data as Comment[])
                 if (count !== null) setCommentCount(count)
 
-                // Fetch user likes for these comments
                 if (user) {
                     const commentIds = data.map(c => c.id)
                     if (commentIds.length > 0) {
@@ -62,10 +61,9 @@ export function CommentsSection() {
             setLoading(false)
         }
 
-        // Initial Fetch
         fetchCommentsAndUser()
 
-        // Realtime Subscription targeted to this exact video
+        // Realtime: append new comments instead of full refetch (avoids N+1)
         const channel = supabase
             .channel(`realtime:comments:${activeVideoId}`)
             .on(
@@ -74,9 +72,21 @@ export function CommentsSection() {
                     event: 'INSERT',
                     schema: 'public',
                     table: 'comments',
-                    filter: `video_id=eq.${activeVideoId}`
+                    filter: `video_id=eq.${activeVideoId}`,
                 },
-                () => fetchCommentsAndUser()
+                async (payload) => {
+                    // Fetch the new comment with joined user data
+                    const { data: newComment } = await supabase
+                        .from('comments')
+                        .select('*, users:profiles(id, username, avatar_url)')
+                        .eq('id', payload.new.id)
+                        .single()
+
+                    if (newComment) {
+                        setComments(prev => [newComment as Comment, ...prev])
+                        incrementCommentCount()
+                    }
+                }
             )
             .subscribe()
 
@@ -87,28 +97,55 @@ export function CommentsSection() {
 
     const handlePost = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!newComment.trim() || !activeVideoId) return
+        const content = newComment.trim()
+        if (!content || !activeVideoId) return
 
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) return alert('Must be logged in to comment')
 
-        const parentId = replyingTo?.parentId || replyingTo?.id || null // Force strictly 1 level deep. If replying to a reply, use its parent.
+        const parentId = replyingTo?.parentId || replyingTo?.id || null
 
+        // Optimistic insert — add a temporary comment immediately
+        const tempId = `temp-${Date.now()}`
+        const optimisticComment: Comment = {
+            id: tempId,
+            video_id: activeVideoId,
+            user_id: user.id,
+            content,
+            parent_id: parentId,
+            likes_count: 0,
+            reply_count: 0,
+            created_at: new Date().toISOString(),
+            deleted_at: null,
+            users: {
+                id: user.id,
+                username: 'You',
+                avatar_url: null,
+                bio: null,
+            },
+        }
+        setComments(prev => [optimisticComment, ...prev])
+        setNewComment('')
+        setReplyingTo(null)
+        incrementCommentCount()
+
+        // Actual DB insert
         const { error } = await supabase
             .from('comments')
             .insert({
                 video_id: activeVideoId,
                 user_id: user.id,
-                content: newComment.trim(),
-                parent_id: parentId
+                content,
+                parent_id: parentId,
             })
 
-        if (!error) {
-            setNewComment('')
-            setReplyingTo(null)
-            incrementCommentCount() // Sync Right Bar to ActionButtons instantly
-            // Realtime push handles updating the actual UI feed
+        if (error) {
+            // Revert optimistic update on failure
+            setComments(prev => prev.filter(c => c.id !== tempId))
+            setNewComment(content)  // restore what they typed
+            console.error('[CommentsSection] Insert failed:', error.message)
         }
+        // On success: realtime subscription will push the real row which de-duplicates the temp entry
     }
 
     const handleDelete = async (commentId: string) => {
@@ -241,11 +278,16 @@ export function CommentsSection() {
                         ref={inputRef}
                         type="text"
                         disabled={!activeVideoId}
-                        placeholder={activeVideoId ? "Add comment..." : "No video active"}
-                        className={`w-full bg-white/10 border border-white/20 py-2 px-4 text-sm focus:outline-none focus:border-brand-primary transition-colors pr-12 disabled:opacity-50 ${replyingTo ? 'rounded-b-lg' : 'rounded-full'}`}
+                        placeholder={activeVideoId ? 'Add comment...' : 'No video active'}
+                        className={`w-full bg-white/10 border border-white/20 py-2 px-4 text-sm focus:outline-none focus:border-brand-primary transition-colors pr-16 disabled:opacity-50 ${replyingTo ? 'rounded-b-lg' : 'rounded-full'
+                            }`}
                         value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
+                        onChange={(e) => setNewComment(e.target.value.slice(0, 300))}
+                        maxLength={300}
                     />
+                    <div className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] text-white/30">
+                        {newComment.length > 0 && `${newComment.length}/300`}
+                    </div>
                     <button
                         type="submit"
                         disabled={!newComment.trim() || !activeVideoId}

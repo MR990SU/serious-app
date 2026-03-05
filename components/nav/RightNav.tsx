@@ -5,37 +5,32 @@ import { CommentsSection } from '@/components/feed/CommentsSection'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Profile } from '@/types'
+import { useAuth } from '@/components/AuthProvider'
 
 export default function RightNav() {
     const [creators, setCreators] = useState<Profile[]>([])
-    const [currentUser, setCurrentUser] = useState<Profile | null>(null)
+    const { user, profile: currentUser } = useAuth()
     const supabase = createClient()
 
     useEffect(() => {
-        const fetchCreatorsAndUser = async () => {
-            const { data: { user } } = await supabase.auth.getUser()
-
-            let query = supabase.from('users').select('*').limit(3)
+        const fetchCreators = async () => {
+            // Fixed: query 'profiles' table, not non-existent 'users' table
+            let query = supabase.from('profiles').select('id, username, avatar_url, bio').limit(5)
 
             if (user) {
-                // Fetch logged-in user profile for the desktop top-right badge
-                const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-                if (profile) setCurrentUser(profile)
-
-                // Exclude current user from suggested creators
                 query = query.neq('id', user.id)
             }
 
             const { data } = await query
             if (data) setCreators(data as Profile[])
         }
-        fetchCreatorsAndUser()
-    }, [])
+        fetchCreators()
+    }, [user])
 
     return (
         <div className="h-full flex flex-col gap-8 text-sm max-h-screen">
 
-            {/* Desktop Top-Right Profile Option */}
+            {/* Desktop Top-Right Profile Badge */}
             {currentUser && (
                 <div className="shrink-0 border-b border-white/10 pb-6 px-2">
                     <Link href="/profile/me" className="flex items-center gap-3 group cursor-pointer hover:bg-white/5 p-2 rounded-xl transition-colors">
@@ -65,9 +60,9 @@ export default function RightNav() {
                         <div className="text-gray-500 text-xs px-2">No suggestions available.</div>
                     ) : (
                         creators.map(creator => (
-                            <div key={creator.id} className="flex items-center justify-between group cursor-pointer px-2 py-1 hover:bg-white/5 rounded-lg transition-colors">
+                            <Link key={creator.id} href={`/profile/${creator.id}`} className="flex items-center justify-between group cursor-pointer px-2 py-1 hover:bg-white/5 rounded-lg transition-colors">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden">
+                                    <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden shrink-0">
                                         {creator.avatar_url ? (
                                             <img src={creator.avatar_url} alt={creator.username} className="w-full h-full object-cover" />
                                         ) : (
@@ -79,8 +74,8 @@ export default function RightNav() {
                                         <p className="text-gray-500 text-xs">@{creator.username}</p>
                                     </div>
                                 </div>
-                                <span className="text-gray-600 group-hover:text-white transition-colors">••</span>
-                            </div>
+                                <span className="text-brand-secondary text-xs font-semibold group-hover:text-white transition-colors">Follow</span>
+                            </Link>
                         ))
                     )}
                 </div>

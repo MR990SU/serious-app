@@ -1,19 +1,134 @@
 import { v2 as cloudinary } from 'cloudinary'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import { NextRequest } from 'next/server'
 
 cloudinary.config({
   cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
+  api_key: process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 })
 
-export async function POST(request: Request) {
-  const body = await request.json()
-  const { paramsToSign } = body
+// Simple Map-based rate limiter with TTL.
+// On Vercel serverless each invocation may share cold lambda memory between
+// requests in a warm window, so this provides best-effort rate limiting.
+// Entries expire after TTL_MS to avoid unbounded growth.
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
+const RATE_LIMIT = 5
+const TTL_MS = 60_000 // 1 minute window
 
-  const signature = cloudinary.utils.api_sign_request(
-    paramsToSign,
-    process.env.CLOUDINARY_API_SECRET!
+function isRateLimited(ip: string): boolean {
+  const now = Date.now()
+  const entry = rateLimitMap.get(ip)
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + TTL_MS })
+    return false
+  }
+  if (entry.count >= RATE_LIMIT) return true
+  entry.count++
+  return false
+}
+
+// Cleanup stale entries periodically (runs in the same warm invocation)
+function pruneRateLimitMap() {
+  const now = Date.now()
+  rateLimitMap.forEach((v, k) => {
+    if (now > v.resetAt) rateLimitMap.delete(k)
+  })
+}
+
+const ALLOWED_FOLDERS = new Set(['videos', 'avatars'])
+
+export async function POST(request: NextRequest) {
+  const isDev = process.env.NODE_ENV === 'development'
+
+  // 1. CSRF: verify Origin header
+  const origin = request.headers.get('origin') || ''
+
+  const isKnownOrigin = [
+    'https://serious-app-eight.vercel.app',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    process.env.NEXT_PUBLIC_SITE_URL,
+  ].filter(Boolean).some(o => origin.startsWith(o!))
+
+  // In development, also allow any private LAN IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  const isLanOrigin = isDev && /^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(origin)
+
+  if (!isKnownOrigin && !isLanOrigin) {
+    console.warn('[upload/sign] Blocked origin:', origin)
+    return Response.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+
+  // 2. Auth: verify session server-side
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll() },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch { }
+        },
+      },
+    }
   )
 
-  return Response.json({ signature })
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // 3. Rate limit by user ID (more reliable than IP on Vercel)
+  pruneRateLimitMap()
+  if (isRateLimited(user.id)) {
+    return Response.json({ error: 'Too many requests' }, { status: 429 })
+  }
+
+  // 4. Parse and validate body
+  let body: { paramsToSign?: Record<string, unknown> }
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  const { paramsToSign } = body
+  if (!paramsToSign || typeof paramsToSign !== 'object') {
+    return Response.json({ error: 'Missing paramsToSign' }, { status: 400 })
+  }
+
+  // 5. Validate folder
+  const folder = paramsToSign.folder as string | undefined
+  if (!folder || !ALLOWED_FOLDERS.has(folder)) {
+    return Response.json({ error: 'Invalid folder' }, { status: 400 })
+  }
+
+  // 6. Validate timestamp to prevent signature replay attacks
+  const timestamp = paramsToSign.timestamp as number | undefined
+  if (!timestamp || typeof timestamp !== 'number') {
+    return Response.json({ error: 'Missing timestamp' }, { status: 400 })
+  }
+  const ageSeconds = Math.abs(Date.now() / 1000 - timestamp)
+  if (ageSeconds > 30) {
+    return Response.json({ error: 'Request expired — sync your clock' }, { status: 400 })
+  }
+
+  // 7. Generate signature
+  try {
+    const signature = cloudinary.utils.api_sign_request(
+      paramsToSign as Record<string, unknown>,
+      process.env.CLOUDINARY_API_SECRET!
+    )
+    return Response.json({ signature })
+  } catch (err: any) {
+    console.error('[upload/sign] Signing error:', err)
+    return Response.json({ error: 'Signing failed' }, { status: 500 })
+  }
 }

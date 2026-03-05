@@ -1,28 +1,40 @@
 'use client'
 import Link from 'next/link'
-import { Search, Bell } from 'lucide-react'
 import { usePathname } from 'next/navigation'
+import { useVideoStore } from '@/lib/store/useVideoStore'
 
 export default function TopNav() {
   const pathname = usePathname()
+  const { feedFilter, setFeedFilter } = useVideoStore()
 
-  // Hide toggles if not on main feed
   const showToggles = pathname === '/'
 
   return (
     <div className="w-full p-4 flex flex-col gap-3 md:bg-transparent md:border-none md:backdrop-blur-none relative z-50">
-      {/* Top Banner: Logo */}
+      {/* Logo */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold font-sans tracking-tight md:block hidden">Xeel</h1>
       </div>
 
-      {/* Centered Toggles */}
+      {/* For You / Following tabs */}
       {showToggles && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2">
-          <button className="px-4 py-1.5 rounded-full bg-white/20 backdrop-blur-md border border-white/20 text-sm font-semibold text-white">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/30 backdrop-blur-md rounded-full p-1 border border-white/10">
+          <button
+            onClick={() => setFeedFilter('forYou')}
+            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all duration-200 ${feedFilter === 'forYou'
+                ? 'bg-white text-black shadow-sm'
+                : 'text-white/60 hover:text-white'
+              }`}
+          >
             For You
           </button>
-          <button className="px-4 py-1.5 rounded-full text-white/60 text-sm font-semibold hover:text-white transition-colors">
+          <button
+            onClick={() => setFeedFilter('following')}
+            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all duration-200 ${feedFilter === 'following'
+                ? 'bg-white text-black shadow-sm'
+                : 'text-white/60 hover:text-white'
+              }`}
+          >
             Following
           </button>
         </div>

@@ -2,8 +2,10 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import Image from 'next/image'
 import { Search } from 'lucide-react'
 import { Video } from '@/types'
+import { getThumbnailUrl } from '@/lib/utils/video-utils'
 
 export default function DiscoverPage() {
     const [query, setQuery] = useState('')
@@ -90,23 +92,22 @@ export default function DiscoverPage() {
                     <div className="grid grid-cols-3 gap-1 grid-flow-row-dense">
                         {results.map((video, idx) => (
                             <Link
-                                href={`/?v=${video.id}`} // assuming home handles ?v= routing, or we navigate to full screen
+                                href={`/?v=${video.id}`}
                                 key={video.id}
-                                className={`relative group bg-gray-900 overflow-hidden ${idx % 7 === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1 min-h-[150px] md:min-h-[200px]'}`}
+                                className={`relative group bg-gray-900 overflow-hidden ${idx % 7 === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1 min-h-[150px] md:min-h-[200px]'
+                                    }`}
                             >
-                                {/* We might capture posters via cloudinary or use the video element directly. Using video for preview. */}
-                                <video
-                                    src={video.video_url}
-                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                    muted
-                                    loop
-                                    playsInline
-                                    onMouseOver={e => (e.target as HTMLVideoElement).play()}
-                                    onMouseOut={e => (e.target as HTMLVideoElement).pause()}
+                                {/* Static thumbnail (next/image for LCP optimization) */}
+                                <Image
+                                    src={getThumbnailUrl(video.video_url)}
+                                    alt={video.caption || 'Video thumbnail'}
+                                    fill
+                                    sizes="(max-width: 640px) 33vw, 200px"
+                                    className="object-cover group-hover:scale-105 transition-transform duration-500"
                                 />
                                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
                                     <span className="text-white text-xs font-semibold drop-shadow-md">
-                                        @{video.users.username}
+                                        @{video.users?.username}
                                     </span>
                                 </div>
                             </Link>
