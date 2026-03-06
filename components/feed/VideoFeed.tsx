@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/client'
 import VideoItem from './VideoItem'
 import { Video } from '@/types'
 import { useVideoStore } from '@/lib/store/useVideoStore'
+import { useAuth } from '@/components/AuthProvider'
 import { Compass } from 'lucide-react'
 
 const BATCH_SIZE = 10
@@ -14,22 +15,50 @@ interface Props {
 
 export default function VideoFeed({ initialVideos }: Props) {
   const { feedFilter } = useVideoStore()
+  // Use AuthProvider context — avoids an extra getUser() call in this component
+  const { user } = useAuth()
   const supabase = createClient()
 
   const [videos, setVideos] = useState<Video[]>(initialVideos)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(true)
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  // Maps video.users.id → following boolean — loaded in one batch per page fetch
+  const [followingMap, setFollowingMap] = useState<Record<string, boolean>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Normalize joined users field (Supabase sometimes returns array)
   const normalize = (data: any[]): Video[] =>
     data.map(v => ({ ...v, users: Array.isArray(v.users) ? v.users[0] : v.users })) as Video[]
 
+  /**
+   * Batch-fetch follow statuses for a list of creator IDs and merge into followingMap.
+   * One query replaces N per-video queries in ActionButtons.
+   */
+  const loadFollowStatuses = useCallback(async (creatorIds: string[]) => {
+    if (!user || creatorIds.length === 0) return
+    const uniqueIds = [...new Set(creatorIds)].filter(id => id !== user.id)
+    if (uniqueIds.length === 0) return
+
+    const { data } = await supabase
+      .from('followers')
+      .select('following_id')
+      .eq('follower_id', user.id)
+      .in('following_id', uniqueIds)
+
+    if (data) {
+      const newEntries = Object.fromEntries(data.map(f => [f.following_id, true]))
+      // Fill non-followed IDs explicitly with false so ActionButtons skips the individual query
+      const allEntries: Record<string, boolean> = {}
+      uniqueIds.forEach(id => { allEntries[id] = false })
+      Object.assign(allEntries, newEntries)
+
+      setFollowingMap(prev => ({ ...prev, ...allEntries }))
+    }
+  }, [user, supabase])
+
   // ── For You feed ──────────────────────────────────────────────
   const fetchForYou = useCallback(async (pageNum: number): Promise<Video[]> => {
-    // Try trending view first, fallback to regular videos
     const { data: trending, error: tErr } = await supabase
       .from('trending_videos')
       .select('*, users:profiles(id, username, avatar_url)')
@@ -52,7 +81,6 @@ export default function VideoFeed({ initialVideos }: Props) {
 
   // ── Following feed ────────────────────────────────────────────
   const fetchFollowing = useCallback(async (pageNum: number, userId: string): Promise<Video[]> => {
-    // Get list of followed user IDs
     const { data: followData, error: fErr } = await supabase
       .from('followers')
       .select('following_id')
@@ -85,43 +113,38 @@ export default function VideoFeed({ initialVideos }: Props) {
       } else if (feedFilter === 'following' && userId) {
         newVideos = await fetchFollowing(pageNum, userId)
       }
-      // No userId on following tab = not logged in or still loading user
+
       setHasMore(newVideos.length === BATCH_SIZE)
       setVideos(prev => {
         const deduped = newVideos.filter(v => !prev.some(p => p.id === v.id))
         return pageNum === 0 ? newVideos : [...prev, ...deduped]
       })
       setPage(pageNum + 1)
+
+      // Batch-fetch follow statuses for all creators in this page
+      const creatorIds = newVideos.map(v => v.users?.id).filter(Boolean) as string[]
+      loadFollowStatuses(creatorIds)
     } finally {
       setLoading(false)
     }
-  }, [feedFilter, loading, fetchForYou, fetchFollowing])
+  }, [feedFilter, loading, fetchForYou, fetchFollowing, loadFollowStatuses])
 
   // ── Reset feed when filter changes ────────────────────────────
   useEffect(() => {
-    // Scroll back to top
     if (scrollRef.current) scrollRef.current.scrollTop = 0
 
-    const init = async () => {
-      let uid = currentUserId
-      if (!uid) {
-        const { data: { user } } = await supabase.auth.getUser()
-        uid = user?.id ?? null
-        setCurrentUserId(uid)
-      }
-      setVideos([])
-      setPage(0)
-      setHasMore(true)
-      // Load first page after state resets on next tick
-      setTimeout(() => loadPage(0, uid), 0)
-    }
-    init()
+    setVideos([])
+    setPage(0)
+    setHasMore(true)
+    setFollowingMap({})
+    // Load first page after state resets on next tick
+    setTimeout(() => loadPage(0, user?.id ?? null), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedFilter])
 
   const handleLoadMore = useCallback(() => {
-    if (!loading && hasMore) loadPage(page, currentUserId)
-  }, [loading, hasMore, page, currentUserId, loadPage])
+    if (!loading && hasMore) loadPage(page, user?.id ?? null)
+  }, [loading, hasMore, page, user?.id, loadPage])
 
   // ── Empty state for Following tab ─────────────────────────────
   const showEmptyFollowing =
@@ -137,6 +160,7 @@ export default function VideoFeed({ initialVideos }: Props) {
           key={video.id}
           video={video}
           index={index}
+          initialFollowing={followingMap[video.users?.id] ?? false}
           loadMore={index === videos.length - 2 && hasMore ? handleLoadMore : undefined}
         />
       ))}

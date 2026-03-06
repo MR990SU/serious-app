@@ -1,8 +1,10 @@
 'use server'
 
 import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { z } from 'zod'
+import { isRateLimited } from '@/lib/rate-limit'
+import { createHash } from 'crypto'
 
 const uuidSchema = z.string().uuid()
 
@@ -38,10 +40,35 @@ export async function incrementViewCount(videoId: string) {
     const supabase = await getSupabase()
     const { data: { user } } = await supabase.auth.getUser()
 
-    await supabase.from('views').insert({
-        video_id: videoId,
-        user_id: user?.id || null,
-    })
+    const identifier = user?.id ?? null
+
+    // Rate limit: 10 view counts per minute per user/IP
+    const rateLimitKey = identifier ?? 'anon'
+    if (isRateLimited(rateLimitKey, 'incrementViewCount', 10, 60_000)) return
+
+    if (identifier) {
+        // Authenticated: deduplicate by (video_id, user_id, date)
+        await supabase.from('views').upsert(
+            { video_id: videoId, user_id: identifier },
+            { onConflict: 'video_id,user_id,view_date', ignoreDuplicates: true }
+        )
+    } else {
+        // Anonymous: deduplicate by hashed IP + date
+        const headerStore = await headers()
+        const ip =
+            headerStore.get('x-forwarded-for')?.split(',')[0].trim() ??
+            headerStore.get('x-real-ip') ??
+            'unknown'
+        const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+        const anonIdentifier = createHash('sha256')
+            .update(`${ip}:${videoId}:${today}`)
+            .digest('hex')
+
+        await supabase.from('views').upsert(
+            { video_id: videoId, user_id: null, anon_identifier: anonIdentifier },
+            { onConflict: 'video_id,anon_identifier,view_date', ignoreDuplicates: true }
+        )
+    }
 }
 
 export async function toggleLike(videoId: string) {
@@ -51,6 +78,11 @@ export async function toggleLike(videoId: string) {
     const supabase = await getSupabase()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { success: false, error: 'Not authenticated' }
+
+    // Rate limit: 30 like toggles per minute
+    if (isRateLimited(user.id, 'toggleLike', 30, 60_000)) {
+        return { success: false, error: 'Too many requests' }
+    }
 
     // Check if already liked
     const { data: existingLike } = await supabase
@@ -75,4 +107,3 @@ export async function toggleLike(videoId: string) {
         return { success: !error, liked: true, error: error?.message }
     }
 }
-

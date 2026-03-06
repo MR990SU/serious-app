@@ -1,63 +1,103 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Notification } from '@/types'
 import { Heart, UserPlus, TrendingUp } from 'lucide-react'
 import Link from 'next/link'
+import { getThumbnailUrl } from '@/lib/utils/video-utils'
+
+type NotifRow = {
+    id: string
+    is_read: boolean
+    type: string
+    message: string | null
+    created_at: string
+    actor: { id: string; username: string; avatar_url: string | null } | null
+    video: { id: string; thumbnail_url: string | null; video_url: string } | null
+}
+
+function formatNotif(n: any): NotifRow {
+    return {
+        ...n,
+        actor: Array.isArray(n.actor) ? n.actor[0] : n.actor,
+        video: Array.isArray(n.video) ? n.video[0] : n.video,
+    }
+}
 
 export default function NotificationsPage() {
-    const [notifications, setNotifications] = useState<any[]>([])
+    const [notifications, setNotifications] = useState<NotifRow[]>([])
     const [loading, setLoading] = useState(true)
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null)
     const supabase = createClient()
 
-    useEffect(() => {
-        fetchNotifications()
-
-        // Realtime subscription for new notifications
-        const channel = supabase.channel('realtime_notifications')
-            .on(
-                'postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'notifications' },
-                (payload) => {
-                    // Add new notification to the top of the list if we know it's for this user
-                    fetchNotifications() // Simplest way to get joined actor data for the new row
-                }
-            )
-            .subscribe()
-
-        return () => {
-            supabase.removeChannel(channel)
-        }
-    }, [])
-
-    const fetchNotifications = async () => {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return
-
-        const { data, error } = await supabase
+    const fetchNotifications = useCallback(async (userId: string) => {
+        const { data } = await supabase
             .from('notifications')
             .select('*, actor:profiles!actor_id(id, username, avatar_url), video:videos!video_id(id, thumbnail_url, video_url)')
-            .eq('user_id', user.id)
+            .eq('user_id', userId)
             .order('created_at', { ascending: false })
             .limit(30)
 
         if (data) {
-            // Supabase sometimes arrays joined data, check and map.
-            const mapped = data.map(n => ({
-                ...n,
-                actor: Array.isArray(n.actor) ? n.actor[0] : n.actor,
-                video: Array.isArray(n.video) ? n.video[0] : n.video,
-            }))
+            const mapped = data.map(formatNotif)
             setNotifications(mapped)
 
-            // Mark them all as read once fetched
+            // Mark all unread as read
             const unreadIds = mapped.filter(n => !n.is_read).map(n => n.id)
             if (unreadIds.length > 0) {
                 await supabase.from('notifications').update({ is_read: true }).in('id', unreadIds)
             }
         }
         setLoading(false)
-    }
+    }, [supabase])
+
+    useEffect(() => {
+        let channel: ReturnType<typeof supabase.channel> | null = null
+
+        const init = async () => {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) {
+                setLoading(false)
+                return
+            }
+            setCurrentUserId(user.id)
+            await fetchNotifications(user.id)
+
+            // Subscribe with user_id filter — avoids receiving other users' notifications
+            // and wastes fewer realtime message quota units.
+            channel = supabase
+                .channel(`realtime_notifications:${user.id}`)
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'notifications',
+                        filter: `user_id=eq.${user.id}`,
+                    },
+                    async (payload) => {
+                        // Fetch only the new row with joined data — no full refetch
+                        const { data: newNotif } = await supabase
+                            .from('notifications')
+                            .select('*, actor:profiles!actor_id(id, username, avatar_url), video:videos!video_id(id, thumbnail_url, video_url)')
+                            .eq('id', payload.new.id)
+                            .single()
+
+                        if (newNotif) {
+                            setNotifications(prev => [formatNotif(newNotif), ...prev])
+                            // Mark as read immediately since it's now visible
+                            await supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id)
+                        }
+                    }
+                )
+                .subscribe()
+        }
+
+        init()
+
+        return () => {
+            if (channel) supabase.removeChannel(channel)
+        }
+    }, [fetchNotifications, supabase])
 
     const getIcon = (type: string) => {
         switch (type) {
@@ -113,12 +153,15 @@ export default function NotificationsPage() {
                                 </p>
                             </div>
 
+                            {/* Use thumbnail_url (static image) — NOT a <video> element which downloads the full video */}
                             {notif.type === 'like' && notif.video && (
                                 <Link href={`/?v=${notif.video.id}`} className="shrink-0">
                                     <div className="w-12 h-14 rounded overflow-hidden bg-gray-800">
-                                        {notif.video.thumbnail_url || notif.video.video_url ? (
-                                            <video src={notif.video.video_url} className="w-full h-full object-cover" muted playsInline />
-                                        ) : null}
+                                        <img
+                                            src={notif.video.thumbnail_url || getThumbnailUrl(notif.video.video_url)}
+                                            alt="video thumbnail"
+                                            className="w-full h-full object-cover"
+                                        />
                                     </div>
                                 </Link>
                             )}

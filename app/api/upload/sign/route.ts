@@ -2,6 +2,7 @@ import { v2 as cloudinary } from 'cloudinary'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
+import { isRateLimited } from '@/lib/rate-limit'
 
 cloudinary.config({
   cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
@@ -9,19 +10,29 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 })
 
+const ALLOWED_FOLDERS = new Set(['videos', 'avatars'])
+
+/**
+ * Resource type enforcement map — injected server-side, cannot be overridden by client.
+ * Values align with Cloudinary's expected `resource_type` and `allowed_formats` params.
+ */
+const FOLDER_CONSTRAINTS: Record<string, { resource_type: string; allowed_formats: string }> = {
+  videos: { resource_type: 'video', allowed_formats: 'mp4,mov,webm' },
+  avatars: { resource_type: 'image', allowed_formats: 'jpg,jpeg,png,webp' },
+}
+
 // Simple Map-based rate limiter with TTL.
 // On Vercel serverless each invocation may share cold lambda memory between
 // requests in a warm window, so this provides best-effort rate limiting.
-// Entries expire after TTL_MS to avoid unbounded growth.
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 const RATE_LIMIT = 5
-const TTL_MS = 60_000 // 1 minute window
+const TTL_MS = 60_000
 
-function isRateLimited(ip: string): boolean {
+function isSigningRateLimited(userId: string): boolean {
   const now = Date.now()
-  const entry = rateLimitMap.get(ip)
+  const entry = rateLimitMap.get(userId)
   if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + TTL_MS })
+    rateLimitMap.set(userId, { count: 1, resetAt: now + TTL_MS })
     return false
   }
   if (entry.count >= RATE_LIMIT) return true
@@ -29,15 +40,12 @@ function isRateLimited(ip: string): boolean {
   return false
 }
 
-// Cleanup stale entries periodically (runs in the same warm invocation)
 function pruneRateLimitMap() {
   const now = Date.now()
   rateLimitMap.forEach((v, k) => {
     if (now > v.resetAt) rateLimitMap.delete(k)
   })
 }
-
-const ALLOWED_FOLDERS = new Set(['videos', 'avatars'])
 
 export async function POST(request: NextRequest) {
   const isDev = process.env.NODE_ENV === 'development'
@@ -59,7 +67,6 @@ export async function POST(request: NextRequest) {
     console.warn('[upload/sign] Blocked origin:', origin)
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
-
 
   // 2. Auth: verify session server-side
   const cookieStore = await cookies()
@@ -85,9 +92,9 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // 3. Rate limit by user ID (more reliable than IP on Vercel)
+  // 3. Rate limit by user ID
   pruneRateLimitMap()
-  if (isRateLimited(user.id)) {
+  if (isSigningRateLimited(user.id)) {
     return Response.json({ error: 'Too many requests' }, { status: 429 })
   }
 
@@ -120,13 +127,27 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Request expired — sync your clock' }, { status: 400 })
   }
 
-  // 7. Generate signature
+  // 7. SECURITY: Inject resource_type and allowed_formats server-side.
+  //    This overwrites any client-supplied values, preventing client override.
+  const constraints = FOLDER_CONSTRAINTS[folder]
+  const securedParams: Record<string, unknown> = {
+    ...paramsToSign,
+    resource_type: constraints.resource_type,
+    allowed_formats: constraints.allowed_formats,
+  }
+
+  // 8. Generate signature
   try {
     const signature = cloudinary.utils.api_sign_request(
-      paramsToSign as Record<string, unknown>,
+      securedParams,
       process.env.CLOUDINARY_API_SECRET!
     )
-    return Response.json({ signature })
+    // Return secured params alongside signature so client uses them in the upload call
+    return Response.json({
+      signature,
+      resource_type: constraints.resource_type,
+      allowed_formats: constraints.allowed_formats,
+    })
   } catch (err: any) {
     console.error('[upload/sign] Signing error:', err)
     return Response.json({ error: 'Signing failed' }, { status: 500 })

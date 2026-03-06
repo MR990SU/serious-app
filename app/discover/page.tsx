@@ -22,6 +22,7 @@ export default function DiscoverPage() {
                 const { data, error } = await supabase
                     .from('videos')
                     .select('*, users:profiles!inner(id, username, full_name, avatar_url)')
+                    .is('deleted_at', null)
                     .or(`caption.ilike.%${query}%,users.username.ilike.%${query}%`)
                     .limit(20)
 
@@ -48,6 +49,7 @@ export default function DiscoverPage() {
         const { data } = await supabase
             .from('trending_videos')
             .select('*, users:profiles(id, username, avatar_url, full_name)')
+            .is('deleted_at', null)
             .limit(20)
 
         if (data) {

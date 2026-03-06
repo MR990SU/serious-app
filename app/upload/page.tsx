@@ -60,7 +60,7 @@ export default function UploadPage() {
         const body = await signRes.json().catch(() => ({}))
         throw new Error(body.error || `Signing failed: ${signRes.status}`)
       }
-      const { signature } = await signRes.json()
+      const { signature, resource_type: resourceType = 'video' } = await signRes.json()
 
       // Step 3 — Upload to Cloudinary with XHR for progress events
       setPhase('uploading')
@@ -70,6 +70,7 @@ export default function UploadPage() {
       formData.append('timestamp', timestamp.toString())
       formData.append('signature', signature)
       formData.append('folder', folder)
+      formData.append('resource_type', resourceType)
 
       const cloudData = await new Promise<any>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
@@ -93,7 +94,7 @@ export default function UploadPage() {
         xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
         xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')))
 
-        xhr.open('POST', `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/video/upload`)
+        xhr.open('POST', `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`)
         xhr.send(formData)
       })
 

@@ -8,51 +8,66 @@ import { toggleFollow } from '@/app/actions/profile-actions'
 import { useVideoStore } from '@/lib/store/useVideoStore'
 import { CommentDrawer } from './CommentDrawer'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import Link from 'next/link'
 
-export default function ActionButtons({ video }: { video: Video }) {
+interface Props {
+  video: Video
+  initialFollowing?: boolean
+  initialLiked?: boolean
+}
+
+export default function ActionButtons({ video, initialFollowing = false, initialLiked = false }: Props) {
   const { activeVideoId, activeVideoLikes, activeVideoComments, incrementLikeCount, decrementLikeCount } = useVideoStore()
   const isActive = activeVideoId === video.id
 
+  // Use AuthProvider context — avoids a redundant getUser() call per video
+  const { user } = useAuth()
+
   const [localLikes, setLocalLikes] = useState(video.likes_count)
-  const [liked, setLiked] = useState(false)
-  const [following, setFollowing] = useState(false)
+  const [liked, setLiked] = useState(initialLiked)
+  const [following, setFollowing] = useState(initialFollowing)
   const [followLoading, setFollowLoading] = useState(false)
   const [isShareOpen, setIsShareOpen] = useState(false)
   const [isCommentOpen, setIsCommentOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   const supabase = createClient()
 
   // Only access window after client-side hydration
   useEffect(() => { setMounted(true) }, [])
 
-  // Load current user + check if already following this creator
+  // If feed didn't pre-load follow status, fall back to an individual query
   useEffect(() => {
-    const loadFollowState = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      setCurrentUserId(user.id)
+    if (initialFollowing) return           // already provided by feed-level batch
+    if (!user || user.id === video.users.id) return
 
-      // Don't show follow button on own videos
-      if (user.id === video.users.id) return
+    supabase
+      .from('followers')
+      .select('follower_id')
+      .eq('follower_id', user.id)
+      .eq('following_id', video.users.id)
+      .maybeSingle()
+      .then(({ data }) => setFollowing(!!data))
+  }, [video.users.id, user?.id, initialFollowing])
 
-      const { data } = await supabase
-        .from('followers')
-        .select('follower_id')
-        .eq('follower_id', user.id)
-        .eq('following_id', video.users.id)
-        .maybeSingle()
+  // Check initial like state on mount (if not pre-loaded)
+  useEffect(() => {
+    if (initialLiked) return               // already provided
+    if (!user) return
 
-      setFollowing(!!data)
-    }
-    loadFollowState()
-  }, [video.users.id])
+    supabase
+      .from('likes')
+      .select('id')
+      .eq('video_id', video.id)
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setLiked(true) })
+  }, [video.id, user?.id, initialLiked])
 
   const displayLikes = isActive ? activeVideoLikes : localLikes
   const displayComments = isActive ? activeVideoComments : (video.comments_count || 0)
-  const isOwnVideo = currentUserId === video.users.id
+  const isOwnVideo = user?.id === video.users.id
 
   const handleLike = async () => {
     const newLiked = !liked
@@ -75,19 +90,14 @@ export default function ActionButtons({ video }: { video: Video }) {
   }
 
   const handleFollow = async () => {
-    if (!currentUserId || followLoading) return
+    if (!user || followLoading) return
     setFollowLoading(true)
 
-    // Optimistic update
     const newFollowing = !following
     setFollowing(newFollowing)
 
     const result = await toggleFollow(video.users.id)
-
-    if (!result?.success) {
-      // Revert on failure
-      setFollowing(!newFollowing)
-    }
+    if (!result?.success) setFollowing(!newFollowing)
     setFollowLoading(false)
   }
 
@@ -124,8 +134,8 @@ export default function ActionButtons({ video }: { video: Video }) {
               disabled={followLoading}
               aria-label={following ? 'Unfollow' : 'Follow'}
               className={`absolute -bottom-3 left-1/2 -translate-x-1/2 rounded-full p-1 shadow-lg transition-all duration-200 ${following
-                  ? 'bg-white text-black scale-90'
-                  : 'bg-brand-accent text-white hover:scale-110'
+                ? 'bg-white text-black scale-90'
+                : 'bg-brand-accent text-white hover:scale-110'
                 } disabled:opacity-60`}
             >
               {following

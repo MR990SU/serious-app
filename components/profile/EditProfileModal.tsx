@@ -60,7 +60,7 @@ export function EditProfileModal({ isOpen, onClose, currentBio, currentAvatar }:
         })
 
         if (!signResponse.ok) throw new Error('Failed to get upload signature')
-        const { signature } = await signResponse.json()
+        const { signature, resource_type: resourceType = 'image' } = await signResponse.json()
 
         // 2. Upload to Cloudinary
         const formData = new FormData()
@@ -70,8 +70,9 @@ export function EditProfileModal({ isOpen, onClose, currentBio, currentAvatar }:
         formData.append('signature', signature)
         formData.append('folder', folder)
 
+        formData.append('resource_type', resourceType)
         const uploadResponse = await fetch(
-            `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`,
+            `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`,
             { method: 'POST', body: formData }
         )
 
@@ -102,7 +103,7 @@ export function EditProfileModal({ isOpen, onClose, currentBio, currentAvatar }:
             if (!result.success) {
                 // Rollback: delete the newly uploaded image from Cloudinary to prevent orphans
                 if (uploadedPublicId) {
-                    const { deleteCloudinaryImage } = await import('@/app/actions')
+                    const { deleteCloudinaryImage } = await import('@/app/actions/profile-actions')
                     await deleteCloudinaryImage(uploadedPublicId)
                 }
                 throw new Error(result.error || 'Failed to update profile')

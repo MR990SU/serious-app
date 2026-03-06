@@ -13,9 +13,10 @@ interface Props {
   video: Video
   index: number
   loadMore?: () => void
+  initialFollowing?: boolean
 }
 
-export default function VideoItem({ video, index, loadMore }: Props) {
+export default function VideoItem({ video, index, loadMore, initialFollowing = false }: Props) {
   const { setActiveVideo } = useVideoStore()
   const videoRef = useRef<HTMLVideoElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
@@ -126,7 +127,7 @@ export default function VideoItem({ video, index, loadMore }: Props) {
           </div>
         </div>
 
-        <ActionButtons video={video} />
+        <ActionButtons video={video} initialFollowing={initialFollowing} />
       </div>
     </div>
   )
