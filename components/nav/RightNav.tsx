@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Profile } from '@/types'
 import { useAuth } from '@/components/AuthProvider'
+import { ClickableAvatar } from '@/components/profile/ClickableAvatar'
 
 export default function RightNav() {
     const [creators, setCreators] = useState<Profile[]>([])
@@ -33,13 +34,9 @@ export default function RightNav() {
             {/* Desktop Top-Right Profile Badge */}
             {currentUser && (
                 <div className="shrink-0 border-b border-white/10 pb-6 px-2">
-                    <Link href="/profile/me" className="flex items-center gap-3 group cursor-pointer hover:bg-white/5 p-2 rounded-xl transition-colors">
+                    <Link href="/profile/me" prefetch className="flex items-center gap-3 group cursor-pointer hover:bg-white/5 p-2 rounded-xl transition-colors">
                         <div className="w-12 h-12 rounded-full bg-gray-700 overflow-hidden border border-white/10 shrink-0">
-                            {currentUser.avatar_url ? (
-                                <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover" />
-                            ) : (
-                                <div className="w-full h-full bg-gradient-to-tr from-brand-secondary to-brand-primary" />
-                            )}
+                            <ClickableAvatar src={currentUser.avatar_url || null} username={currentUser.username} className="w-full h-full" />
                         </div>
                         <div className="font-bold flex-1 overflow-hidden">
                             <p className="text-white text-base truncate">{currentUser.username}</p>
@@ -60,14 +57,10 @@ export default function RightNav() {
                         <div className="text-gray-500 text-xs px-2">No suggestions available.</div>
                     ) : (
                         creators.map(creator => (
-                            <Link key={creator.id} href={`/profile/${creator.id}`} className="flex items-center justify-between group cursor-pointer px-2 py-1 hover:bg-white/5 rounded-lg transition-colors">
+                            <Link key={creator.id} href={`/profile/${creator.id}`} prefetch className="flex items-center justify-between group cursor-pointer px-2 py-1 hover:bg-white/5 rounded-lg transition-colors">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden shrink-0">
-                                        {creator.avatar_url ? (
-                                            <img src={creator.avatar_url} alt={creator.username} className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full bg-gradient-to-tr from-gray-600 to-gray-400" />
-                                        )}
+                                        <ClickableAvatar src={creator.avatar_url || null} username={creator.username} className="w-full h-full" />
                                     </div>
                                     <div>
                                         <p className="font-bold text-sm">{creator.username}</p>

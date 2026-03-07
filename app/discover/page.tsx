@@ -1,17 +1,21 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Search } from 'lucide-react'
 import { Video } from '@/types'
 import { getThumbnailUrl } from '@/lib/utils/video-utils'
+import { PostCard } from '@/components/feed/PostCard'
+import { useRouter } from 'next/navigation'
 
 export default function DiscoverPage() {
     const [query, setQuery] = useState('')
     const [results, setResults] = useState<Video[]>([])
     const [loading, setLoading] = useState(false)
+    const seenIds = useRef(new Set<string>())
     const supabase = createClient()
+    const router = useRouter()
 
     // Debounce search
     useEffect(() => {
@@ -46,19 +50,19 @@ export default function DiscoverPage() {
 
     const fetchPopular = async () => {
         setLoading(true)
-        const { data } = await supabase
-            .from('trending_videos')
-            .select('*, users:profiles(id, username, avatar_url, full_name)')
-            .is('deleted_at', null)
-            .limit(20)
+        try {
+            const res = await fetch('/api/explore')
+            const data = await res.json()
+            if (data.videos) {
+                // Client-side deduplication using a Set
+                const newVideos = data.videos.filter((v: Video) => !seenIds.current.has(v.id))
+                newVideos.forEach((v: Video) => seenIds.current.add(v.id))
 
-        if (data) {
-            const formattedData = data.map((v: any) => ({
-                ...v,
-                id: v.video_id, // Map the materialized view's video_id back to standard 'id' for the frontend
-                users: Array.isArray(v.users) ? v.users[0] : v.users
-            })) as unknown as Video[]
-            setResults(formattedData)
+                // If it's the initial load, just set them. If fetching more (future), append.
+                setResults(prev => prev.length === 0 ? newVideos : [...prev, ...newVideos])
+            }
+        } catch (error) {
+            console.error('Failed to fetch explore feed:', error)
         }
         setLoading(false)
     }
@@ -93,26 +97,12 @@ export default function DiscoverPage() {
                 ) : (
                     <div className="grid grid-cols-3 gap-1 grid-flow-row-dense">
                         {results.map((video, idx) => (
-                            <Link
-                                href={`/?v=${video.id}`}
+                            <PostCard
                                 key={video.id}
-                                className={`relative group bg-gray-900 overflow-hidden ${idx % 7 === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1 min-h-[150px] md:min-h-[200px]'
-                                    }`}
-                            >
-                                {/* Static thumbnail (next/image for LCP optimization) */}
-                                <Image
-                                    src={getThumbnailUrl(video.video_url)}
-                                    alt={video.caption || 'Video thumbnail'}
-                                    fill
-                                    sizes="(max-width: 640px) 33vw, 200px"
-                                    className="object-cover group-hover:scale-105 transition-transform duration-500"
-                                />
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
-                                    <span className="text-white text-xs font-semibold drop-shadow-md">
-                                        @{video.users?.username}
-                                    </span>
-                                </div>
-                            </Link>
+                                video={video}
+                                onClick={() => router.push(`/?v=${video.id}`)}
+                                className={idx % 7 === 0 ? 'col-span-2 row-span-2' : 'col-span-1 row-span-1 min-h-[150px] md:min-h-[200px]'}
+                            />
                         ))}
                     </div>
                 )}

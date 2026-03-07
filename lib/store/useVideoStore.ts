@@ -7,12 +7,14 @@ interface VideoStore {
     activeVideoLikes: number
     activeVideoComments: number
     feedFilter: FeedFilter
+    autoPlayEnabled: boolean
     setActiveVideo: (id: string, likes: number, comments: number) => void
     setCommentCount: (count: number) => void
     incrementCommentCount: () => void
     incrementLikeCount: () => void
     decrementLikeCount: () => void
     setFeedFilter: (filter: FeedFilter) => void
+    setAutoPlayEnabled: (enabled: boolean) => void
 }
 
 export const useVideoStore = create<VideoStore>((set) => ({
@@ -20,6 +22,7 @@ export const useVideoStore = create<VideoStore>((set) => ({
     activeVideoLikes: 0,
     activeVideoComments: 0,
     feedFilter: 'forYou',
+    autoPlayEnabled: true,
 
     setActiveVideo: (id, likes, comments) =>
         set({ activeVideoId: id, activeVideoLikes: likes, activeVideoComments: comments }),
@@ -38,4 +41,7 @@ export const useVideoStore = create<VideoStore>((set) => ({
 
     setFeedFilter: (filter) =>
         set({ feedFilter: filter }),
+
+    setAutoPlayEnabled: (enabled) =>
+        set({ autoPlayEnabled: enabled }),
 }))

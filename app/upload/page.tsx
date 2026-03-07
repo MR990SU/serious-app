@@ -1,118 +1,155 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { CheckCircle2, UploadCloud, Film } from 'lucide-react'
+import { CheckCircle2, UploadCloud, Film, Image as ImageIcon, Music } from 'lucide-react'
+import { Audio } from '@/types'
 
-type UploadPhase = 'idle' | 'signing' | 'uploading' | 'processing' | 'done' | 'error'
+type UploadPhase = 'idle' | 'uploading' | 'processing' | 'done' | 'error'
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
+  const [mediaType, setMediaType] = useState<'video' | 'photo'>('video')
   const [caption, setCaption] = useState('')
   const [phase, setPhase] = useState<UploadPhase>('idle')
-  const [progress, setProgress] = useState(0)  // 0–100 during Cloudinary XHR upload
   const [error, setError] = useState('')
-  const xhrRef = useRef<XMLHttpRequest | null>(null)
+
+  // Audio selection
+  const [audioList, setAudioList] = useState<Audio[]>([])
+  const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null)
+  const [isAudioDrawerOpen, setIsAudioDrawerOpen] = useState(false)
+
   const supabase = createClient()
   const router = useRouter()
 
-  const ALLOWED_TYPES = ['video/mp4', 'video/quicktime', 'video/webm']
+  const ALLOWED_VIDEO = ['video/mp4', 'video/quicktime', 'video/webm']
+  const ALLOWED_PHOTO = ['image/jpeg', 'image/png', 'image/webp']
   const MAX_SIZE_BYTES = 100 * 1024 * 1024 // 100MB
+
+  useEffect(() => {
+    // Load available audio tracks
+    const fetchAudio = async () => {
+      const { data } = await supabase.from('audio').select('*').order('used_count', { ascending: false })
+      if (data) setAudioList(data)
+    }
+    fetchAudio()
+  }, [supabase])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0] || null
     if (!selected) return
-    if (!ALLOWED_TYPES.includes(selected.type)) {
-      setError('Only MP4, MOV, and WebM files are supported.')
+
+    const isVideo = ALLOWED_VIDEO.includes(selected.type)
+    const isPhoto = ALLOWED_PHOTO.includes(selected.type)
+
+    if (!isVideo && !isPhoto) {
+      setError('Only MP4, MOV, WebM videos or JPG, PNG photos are supported.')
       return
     }
     if (selected.size > MAX_SIZE_BYTES) {
       setError('File must be under 100MB.')
       return
     }
+
+    setMediaType(isVideo ? 'video' : 'photo')
     setError('')
     setPhase('idle')
-    setProgress(0)
     setFile(selected)
+  }
+
+  // --- Generate Thumbnail via Canvas ---
+  const generateVideoThumbnail = (videoFile: File): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video')
+      video.autoplay = true
+      video.muted = true
+      video.playsInline = true
+      const url = URL.createObjectURL(videoFile)
+      video.src = url
+
+      video.onloadeddata = () => {
+        video.currentTime = Math.min(1, video.duration / 2) // Seek to 1s or middle
+      }
+
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+        canvas.toBlob(blob => {
+          URL.revokeObjectURL(url)
+          if (blob) resolve(blob)
+          else reject(new Error('Failed to generate thumbnail'))
+        }, 'image/jpeg', 0.8)
+      }
+
+      video.onerror = () => {
+        URL.revokeObjectURL(url)
+        reject(new Error('Error loading video file for thumbnail'))
+      }
+    })
   }
 
   const handleUpload = async () => {
     if (!file || !caption.trim()) return
     setError('')
-    setProgress(0)
+    setPhase('uploading')
 
     try {
-      // Step 1 — Auth
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not authenticated')
 
-      // Step 2 — Get Cloudinary signature
-      setPhase('signing')
-      const timestamp = Math.round(Date.now() / 1000)
-      const folder = 'videos'
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`
 
-      const signRes = await fetch('/api/upload/sign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paramsToSign: { timestamp, folder } }),
-      })
-      if (!signRes.ok) {
-        const body = await signRes.json().catch(() => ({}))
-        throw new Error(body.error || `Signing failed: ${signRes.status}`)
-      }
-      const { signature, resource_type: resourceType = 'video' } = await signRes.json()
+      // 1. Upload Media
+      const { error: uploadError } = await supabase.storage
+        .from('reels-media')
+        .upload(fileName, file, { cacheControl: '3600', upsert: false })
 
-      // Step 3 — Upload to Cloudinary with XHR for progress events
-      setPhase('uploading')
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('api_key', process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY!)
-      formData.append('timestamp', timestamp.toString())
-      formData.append('signature', signature)
-      formData.append('folder', folder)
-      formData.append('resource_type', resourceType)
+      if (uploadError) throw uploadError
 
-      const cloudData = await new Promise<any>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhrRef.current = xhr
+      const { data: { publicUrl: mediaUrl } } = supabase.storage
+        .from('reels-media')
+        .getPublicUrl(fileName)
 
-        xhr.upload.addEventListener('progress', (evt) => {
-          if (evt.lengthComputable) {
-            setProgress(Math.round((evt.loaded / evt.total) * 100))
-          }
-        })
-
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try { resolve(JSON.parse(xhr.responseText)) }
-            catch { reject(new Error('Invalid response from Cloudinary')) }
-          } else {
-            reject(new Error(`Upload failed: ${xhr.status}`))
-          }
-        })
-
-        xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
-        xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')))
-
-        xhr.open('POST', `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`)
-        xhr.send(formData)
-      })
-
-      if (!cloudData.secure_url) throw new Error('Upload failed — no URL returned')
-
-      // Step 4 — Save to Supabase
+      // 2. Upload / Generate Thumbnail
       setPhase('processing')
-      setProgress(100)
+      let thumbnailUrl = mediaUrl // Default to self for photos
 
+      if (mediaType === 'video') {
+        try {
+          const thumbBlob = await generateVideoThumbnail(file)
+          const thumbName = `${user.id}/${Date.now()}_thumb.jpg`
+
+          const { error: thumbErr } = await supabase.storage
+            .from('reels-media')
+            .upload(thumbName, thumbBlob, { contentType: 'image/jpeg' })
+
+          if (!thumbErr) {
+            const { data: thumbData } = supabase.storage
+              .from('reels-media')
+              .getPublicUrl(thumbName)
+            thumbnailUrl = thumbData.publicUrl
+          }
+        } catch (e) {
+          console.warn('Thumbnail generation failed, falling back to empty/default', e)
+          // Soft fail: keep default
+        }
+      }
+
+      // 3. Save to database
       const { error: dbError } = await supabase.from('videos').insert({
         user_id: user.id,
-        video_url: cloudData.secure_url,
-        caption: caption.trim(),
-        duration: cloudData.duration,
-        thumbnail_url: cloudData.secure_url
-          .replace('/upload/', '/upload/c_fill,f_auto,q_auto,w_400,h_533/')
-          .replace(/\.[^/.]+$/, '.jpg'),
+        video_url: mediaUrl,
+        media_type: mediaType,
+        thumbnail_url: thumbnailUrl,
+        audio_id: selectedAudioId,
+        caption: caption.trim()
       })
+
       if (dbError) throw dbError
 
       setPhase('done')
@@ -122,48 +159,105 @@ export default function UploadPage() {
       console.error('Upload failed:', e)
       setError(e.message || 'Upload failed. Please try again.')
       setPhase('error')
-      setProgress(0)
     }
   }
 
-  const handleCancel = () => {
-    xhrRef.current?.abort()
-    setPhase('idle')
-    setProgress(0)
-  }
-
-  const isUploading = phase === 'signing' || phase === 'uploading' || phase === 'processing'
+  const isUploading = phase === 'uploading' || phase === 'processing'
 
   const phaseLabel: Record<UploadPhase, string> = {
-    idle: 'Post Video',
-    signing: 'Preparing...',
-    uploading: `Uploading... ${progress}%`,
-    processing: 'Processing video...',
+    idle: 'Post to Feed',
+    uploading: 'Uploading to Storage...',
+    processing: 'Processing media...',
     done: 'Done! Redirecting...',
     error: 'Retry',
   }
 
+  const selectedAudioInfo = audioList.find(a => a.id === selectedAudioId)
+
   return (
-    <div className="p-6 pt-10 text-white h-full overflow-y-auto">
+    <div className="p-6 pt-10 text-white h-full overflow-y-auto pb-24">
       <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
-        <Film size={24} className="text-brand-accent" /> Upload Video
+        <Film size={24} className="text-brand-accent" /> New Post
       </h1>
 
       <div className="space-y-4 max-w-lg">
         {/* File picker */}
-        <div className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${file ? 'border-brand-accent/40 bg-brand-accent/5' : 'border-white/20 hover:border-white/40'}`}>
+        <div className={`relative border-2 border-dashed rounded-xl p-6 text-center transition-colors ${file ? 'border-brand-accent/40 bg-brand-accent/5' : 'border-white/20 hover:border-white/40'}`}>
           <input
             type="file"
-            accept="video/mp4,video/quicktime,video/webm"
+            accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp"
             onChange={handleFileChange}
             disabled={isUploading}
-            className="block w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:bg-gray-800 file:text-white file:cursor-pointer cursor-pointer disabled:opacity-50"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:opacity-0"
           />
-          <p className="text-xs text-gray-500 mt-2">MP4, MOV, WebM · Max 100MB</p>
+
+          {!file && (
+            <div className="flex flex-col items-center gap-2 pointer-events-none">
+              <UploadCloud size={32} className="text-gray-400" />
+              <span className="font-medium text-gray-300">Tap to select media</span>
+            </div>
+          )}
+
+          <p className="text-xs text-gray-500 mt-3 pointer-events-none">Videos (MP4/MOV) or Photos (JPG/PNG) · Max 100MB</p>
           {file && (
-            <p className="text-xs text-green-400 mt-2 font-medium">
-              ✓ {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
+            <p className="text-sm text-green-400 mt-3 font-medium flex items-center justify-center gap-2 pointer-events-none">
+              {mediaType === 'photo' ? <ImageIcon size={16} /> : <Film size={16} />}
+              {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
             </p>
+          )}
+        </div>
+
+        {/* Audio Selector */}
+        <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setIsAudioDrawerOpen(!isAudioDrawerOpen)}
+            className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-gray-800 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="bg-white/10 p-2 rounded-full">
+                <Music size={18} className="text-brand-accent" />
+              </div>
+              <div className="text-left">
+                <p className="font-semibold text-sm">
+                  {selectedAudioInfo ? selectedAudioInfo.title : 'Add Audio'}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {selectedAudioInfo ? selectedAudioInfo.artist : 'Select a track for your reel'}
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-full text-white/80">
+              {selectedAudioId ? 'Change' : 'Browse'}
+            </span>
+          </button>
+
+          {/* Audio List Drawer */}
+          {isAudioDrawerOpen && (
+            <div className="border-t border-gray-800 bg-gray-950 p-2 max-h-60 overflow-y-auto">
+              <button
+                onClick={() => { setSelectedAudioId(null); setIsAudioDrawerOpen(false); }}
+                className={`w-full text-left p-3 rounded-lg text-sm mb-1 ${!selectedAudioId ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800'}`}
+              >
+                Original Audio (None)
+              </button>
+              {audioList.map(audio => (
+                <button
+                  key={audio.id}
+                  onClick={() => { setSelectedAudioId(audio.id); setIsAudioDrawerOpen(false); }}
+                  className={`w-full text-left p-3 rounded-lg text-sm mb-1 flex justify-between items-center ${selectedAudioId === audio.id ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800 text-white'}`}
+                >
+                  <div>
+                    <p className="font-bold">{audio.title}</p>
+                    <p className="text-xs opacity-70">{audio.artist}</p>
+                  </div>
+                  <span className="text-xs opacity-50">{audio.used_count.toLocaleString()} posts</span>
+                </button>
+              ))}
+              {audioList.length === 0 && (
+                <div className="p-4 text-center text-sm text-gray-500">No audio tracks available. Add them to the database first.</div>
+              )}
+            </div>
           )}
         </div>
 
@@ -173,7 +267,7 @@ export default function UploadPage() {
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
           disabled={isUploading}
-          className="w-full bg-gray-900 border border-gray-700 rounded-xl p-3 text-white resize-none focus:outline-none focus:border-pink-500 transition-colors disabled:opacity-50"
+          className="w-full bg-gray-900 border border-gray-700 rounded-xl p-3 text-white resize-none focus:outline-none focus:border-brand-accent transition-colors disabled:opacity-50"
           rows={3}
           maxLength={150}
         />
@@ -186,39 +280,21 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* Progress bar — shown during upload */}
+        {/* Status */}
         {(isUploading || phase === 'done') && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm font-medium">
-              <span className="text-white/70">
-                {phase === 'uploading' ? 'Uploading to cloud...' :
-                  phase === 'processing' ? 'Processing video...' :
-                    phase === 'done' ? 'Upload complete!' : 'Preparing...'}
-              </span>
-              <span className={phase === 'done' ? 'text-green-400' : 'text-brand-secondary'}>
-                {phase === 'done' ? '✓' : `${progress}%`}
-              </span>
+              <span className="text-white/70">{phaseLabel[phase]}</span>
             </div>
-
-            {/* Track */}
-            <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-300 ease-out ${phase === 'done' ? 'bg-green-500' : 'bg-gradient-to-r from-brand-primary via-brand-accent to-brand-secondary'}`}
-                style={{ width: `${phase === 'done' ? 100 : progress}%` }}
-              />
-            </div>
-
-            {/* Large percentage — prominent for mobile */}
-            {phase === 'uploading' && (
-              <p className="text-center text-3xl font-black text-white tracking-tight">
-                {progress}<span className="text-lg text-white/50">%</span>
-              </p>
-            )}
-
             {phase === 'done' && (
-              <div className="flex items-center justify-center gap-2 text-green-400 font-bold">
+              <div className="flex items-center justify-center gap-2 text-green-400 font-bold mt-4">
                 <CheckCircle2 size={18} />
-                <span>Upload complete! Redirecting...</span>
+                <span>Upload complete!</span>
+              </div>
+            )}
+            {isUploading && (
+              <div className="w-full bg-gray-800 h-2 rounded-full overflow-hidden">
+                <div className="bg-brand-accent h-full w-1/2 animate-pulse rounded-full" />
               </div>
             )}
           </div>
@@ -229,20 +305,11 @@ export default function UploadPage() {
           <button
             onClick={handleUpload}
             disabled={isUploading || !file || !caption.trim() || phase === 'done'}
-            className="flex-1 bg-gradient-to-r from-brand-primary to-brand-accent py-3 rounded-xl font-bold disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+            className="flex-1 bg-gradient-to-r from-brand-primary to-brand-accent py-4 rounded-xl font-bold disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center justify-center gap-2 shadow-lg shadow-brand-accent/20"
           >
-            <UploadCloud size={18} />
+            <UploadCloud size={20} />
             {phaseLabel[phase]}
           </button>
-
-          {isUploading && (
-            <button
-              onClick={handleCancel}
-              className="px-4 py-3 rounded-xl border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-colors text-sm font-medium"
-            >
-              Cancel
-            </button>
-          )}
         </div>
       </div>
     </div>

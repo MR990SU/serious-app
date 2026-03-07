@@ -76,7 +76,7 @@ export default function ReelPageClient({ video }: Props) {
 
             {/* Caption & username */}
             <div className="absolute bottom-20 left-4 right-20 z-20">
-                <Link href={`/profile/${video.users?.id}`} className="font-bold text-lg hover:underline flex items-center gap-2 mb-2 text-white">
+                <Link href={`/profile/${video.users?.id}`} prefetch className="font-bold text-lg hover:underline flex items-center gap-2 mb-2 text-white">
                     @{video.users?.username}
                 </Link>
                 <div className="text-sm text-white">

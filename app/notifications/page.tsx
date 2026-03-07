@@ -7,48 +7,42 @@ import { getThumbnailUrl } from '@/lib/utils/video-utils'
 
 type NotifRow = {
     id: string
-    is_read: boolean
+    seen: boolean
     type: string
-    message: string | null
     created_at: string
     actor: { id: string; username: string; avatar_url: string | null } | null
     video: { id: string; thumbnail_url: string | null; video_url: string } | null
 }
 
-function formatNotif(n: any): NotifRow {
-    return {
-        ...n,
-        actor: Array.isArray(n.actor) ? n.actor[0] : n.actor,
-        video: Array.isArray(n.video) ? n.video[0] : n.video,
-    }
-}
-
 export default function NotificationsPage() {
     const [notifications, setNotifications] = useState<NotifRow[]>([])
     const [loading, setLoading] = useState(true)
-    const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+    const [hasMore, setHasMore] = useState(true)
+    const [cursor, setCursor] = useState<string | null>(null)
     const supabase = createClient()
 
-    const fetchNotifications = useCallback(async (userId: string) => {
-        const { data } = await supabase
-            .from('notifications')
-            .select('*, actor:profiles!actor_id(id, username, avatar_url), video:videos!video_id(id, thumbnail_url, video_url)')
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(30)
+    const fetchNotifications = useCallback(async (currentCursor: string | null = null) => {
+        try {
+            const url = currentCursor ? `/api/notifications?cursor=${currentCursor}` : `/api/notifications`
+            const res = await fetch(url)
+            const data = await res.json()
 
-        if (data) {
-            const mapped = data.map(formatNotif)
-            setNotifications(mapped)
+            if (data.notifications) {
+                setNotifications(prev => currentCursor ? [...prev, ...data.notifications] : data.notifications)
+                setCursor(data.nextCursor)
+                setHasMore(!!data.nextCursor)
 
-            // Mark all unread as read
-            const unreadIds = mapped.filter(n => !n.is_read).map(n => n.id)
-            if (unreadIds.length > 0) {
-                await supabase.from('notifications').update({ is_read: true }).in('id', unreadIds)
+                // Mark unread as seen in the background
+                if (data.notifications.some((n: NotifRow) => !n.seen)) {
+                    fetch('/api/notifications/seen', { method: 'PATCH' }).catch(console.error)
+                }
             }
+        } catch (e) {
+            console.error('Failed to fetch notifications', e)
+        } finally {
+            setLoading(false)
         }
-        setLoading(false)
-    }, [supabase])
+    }, [])
 
     useEffect(() => {
         let channel: ReturnType<typeof supabase.channel> | null = null
@@ -59,11 +53,9 @@ export default function NotificationsPage() {
                 setLoading(false)
                 return
             }
-            setCurrentUserId(user.id)
-            await fetchNotifications(user.id)
+            await fetchNotifications(null)
 
-            // Subscribe with user_id filter — avoids receiving other users' notifications
-            // and wastes fewer realtime message quota units.
+            // Realtime listening for new notifications
             channel = supabase
                 .channel(`realtime_notifications:${user.id}`)
                 .on(
@@ -74,19 +66,9 @@ export default function NotificationsPage() {
                         table: 'notifications',
                         filter: `user_id=eq.${user.id}`,
                     },
-                    async (payload) => {
-                        // Fetch only the new row with joined data — no full refetch
-                        const { data: newNotif } = await supabase
-                            .from('notifications')
-                            .select('*, actor:profiles!actor_id(id, username, avatar_url), video:videos!video_id(id, thumbnail_url, video_url)')
-                            .eq('id', payload.new.id)
-                            .single()
-
-                        if (newNotif) {
-                            setNotifications(prev => [formatNotif(newNotif), ...prev])
-                            // Mark as read immediately since it's now visible
-                            await supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id)
-                        }
+                    () => {
+                        // Optimistically refresh top of feed on background network changes
+                        fetchNotifications(null)
                     }
                 )
                 .subscribe()
@@ -98,6 +80,12 @@ export default function NotificationsPage() {
             if (channel) supabase.removeChannel(channel)
         }
     }, [fetchNotifications, supabase])
+
+    const loadMore = () => {
+        if (!loading && hasMore && cursor) {
+            fetchNotifications(cursor)
+        }
+    }
 
     const getIcon = (type: string) => {
         switch (type) {
@@ -126,9 +114,9 @@ export default function NotificationsPage() {
             ) : (
                 <div className="flex flex-col divide-y divide-gray-900">
                     {notifications.map((notif) => (
-                        <div key={notif.id} className={`flex items-center gap-4 p-4 hover:bg-white/5 transition-colors ${!notif.is_read ? 'bg-white/5' : ''}`}>
+                        <div key={notif.id} className={`flex items-center gap-4 p-4 hover:bg-white/5 transition-colors ${!notif.seen ? 'bg-white/5' : ''}`}>
 
-                            <Link href={`/profile/${notif.actor?.id}`} className="shrink-0 relative">
+                            <Link href={`/profile/${notif.actor?.username || notif.actor?.id}`} prefetch className="shrink-0 relative">
                                 <div className="w-12 h-12 rounded-full overflow-hidden bg-gray-800">
                                     {notif.actor?.avatar_url ? (
                                         <img src={notif.actor.avatar_url} alt="" className="w-full h-full object-cover" />
@@ -143,10 +131,14 @@ export default function NotificationsPage() {
 
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm">
-                                    <Link href={`/profile/${notif.actor?.id}`} className="font-bold hover:underline">
+                                    <Link href={`/profile/${notif.actor?.username || notif.actor?.id}`} prefetch className="font-bold hover:underline">
                                         {notif.actor?.username || 'Someone'}
                                     </Link>{' '}
-                                    <span className="text-gray-300">{notif.message}</span>
+                                    <span className="text-gray-300">
+                                        {notif.type === 'like' ? 'liked your reel' :
+                                            notif.type === 'comment' ? 'commented on your reel' :
+                                                'interacted with you'}
+                                    </span>
                                 </p>
                                 <p className="text-xs text-gray-500 mt-1">
                                     {new Date(notif.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
@@ -167,6 +159,17 @@ export default function NotificationsPage() {
                             )}
                         </div>
                     ))}
+
+                    {hasMore && (
+                        <div className="flex justify-center p-6 border-t border-gray-900">
+                            <button
+                                onClick={loadMore}
+                                className="px-6 py-2 bg-gray-900 hover:bg-gray-800 rounded-full text-sm font-bold transition-colors"
+                            >
+                                Load More
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

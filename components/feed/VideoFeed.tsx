@@ -6,34 +6,46 @@ import { Video } from '@/types'
 import { useVideoStore } from '@/lib/store/useVideoStore'
 import { useAuth } from '@/components/AuthProvider'
 import { Compass } from 'lucide-react'
+import { getOptimizedVideoUrl } from '@/lib/utils/video-utils'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
-const BATCH_SIZE = 10
+const BATCH_SIZE = 12
 
 interface Props {
   initialVideos: Video[]
 }
 
 export default function VideoFeed({ initialVideos }: Props) {
-  const { feedFilter } = useVideoStore()
-  // Use AuthProvider context — avoids an extra getUser() call in this component
+  const { feedFilter, activeVideoId } = useVideoStore()
   const { user } = useAuth()
   const supabase = createClient()
 
   const [videos, setVideos] = useState<Video[]>(initialVideos)
-  const [page, setPage] = useState(0)
+  const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(true)
-  // Maps video.users.id → following boolean — loaded in one batch per page fetch
   const [followingMap, setFollowingMap] = useState<Record<string, boolean>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [viewportHeight, setViewportHeight] = useState(0)
 
-  // Normalize joined users field (Supabase sometimes returns array)
-  const normalize = (data: any[]): Video[] =>
-    data.map(v => ({ ...v, users: Array.isArray(v.users) ? v.users[0] : v.users })) as Video[]
+  // Initialize viewport height for server side rendering safety
+  useEffect(() => {
+    setViewportHeight(window.innerHeight)
+
+    const handleResize = () => setViewportHeight(window.innerHeight)
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  const rowVirtualizer = useVirtualizer({
+    count: videos.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => viewportHeight || 800, // Fallback until mounted
+    overscan: 3,
+  })
 
   /**
    * Batch-fetch follow statuses for a list of creator IDs and merge into followingMap.
-   * One query replaces N per-video queries in ActionButtons.
    */
   const loadFollowStatuses = useCallback(async (creatorIds: string[]) => {
     if (!user || creatorIds.length === 0) return
@@ -48,7 +60,6 @@ export default function VideoFeed({ initialVideos }: Props) {
 
     if (data) {
       const newEntries = Object.fromEntries(data.map(f => [f.following_id, true]))
-      // Fill non-followed IDs explicitly with false so ActionButtons skips the individual query
       const allEntries: Record<string, boolean> = {}
       uniqueIds.forEach(id => { allEntries[id] = false })
       Object.assign(allEntries, newEntries)
@@ -57,121 +68,144 @@ export default function VideoFeed({ initialVideos }: Props) {
     }
   }, [user, supabase])
 
-  // ── For You feed ──────────────────────────────────────────────
-  const fetchForYou = useCallback(async (pageNum: number): Promise<Video[]> => {
-    const { data: trending, error: tErr } = await supabase
-      .from('trending_videos')
-      .select('*, users:profiles(id, username, avatar_url)')
-      .range(pageNum * BATCH_SIZE, (pageNum + 1) * BATCH_SIZE - 1)
-
-    if (!tErr && trending && trending.length > 0) {
-      return normalize(trending.map((v: any) => ({ ...v, id: v.video_id })))
-    }
-
-    const { data, error } = await supabase
-      .from('videos')
-      .select('*, users:profiles(id, username, avatar_url)')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .range(pageNum * BATCH_SIZE, (pageNum + 1) * BATCH_SIZE - 1)
-
-    if (error) console.error('[VideoFeed] forYou fetch error:', error.message)
-    return normalize(data ?? [])
-  }, [])
-
-  // ── Following feed ────────────────────────────────────────────
-  const fetchFollowing = useCallback(async (pageNum: number, userId: string): Promise<Video[]> => {
-    const { data: followData, error: fErr } = await supabase
-      .from('followers')
-      .select('following_id')
-      .eq('follower_id', userId)
-
-    if (fErr || !followData || followData.length === 0) return []
-
-    const followingIds = followData.map(f => f.following_id)
-
-    const { data, error } = await supabase
-      .from('videos')
-      .select('*, users:profiles(id, username, avatar_url)')
-      .in('user_id', followingIds)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .range(pageNum * BATCH_SIZE, (pageNum + 1) * BATCH_SIZE - 1)
-
-    if (error) console.error('[VideoFeed] following fetch error:', error.message)
-    return normalize(data ?? [])
-  }, [])
-
-  // ── Load a page of videos ─────────────────────────────────────
-  const loadPage = useCallback(async (pageNum: number, userId: string | null) => {
+  // ── Load feed via /api/feed with cursor pagination ─────────
+  const loadFeed = useCallback(async (cursorVal: string | null, isReset: boolean) => {
     if (loading) return
     setLoading(true)
     try {
-      let newVideos: Video[] = []
-      if (feedFilter === 'forYou') {
-        newVideos = await fetchForYou(pageNum)
-      } else if (feedFilter === 'following' && userId) {
-        newVideos = await fetchFollowing(pageNum, userId)
+      const params = new URLSearchParams()
+      if (cursorVal) params.set('cursor', cursorVal)
+      params.set('filter', feedFilter)
+
+      const res = await fetch(`/api/feed?${params.toString()}`)
+      if (!res.ok) throw new Error(`Feed API returned ${res.status}`)
+
+      const { posts, nextCursor } = await res.json() as {
+        posts: Video[]
+        nextCursor: string | null
       }
 
-      setHasMore(newVideos.length === BATCH_SIZE)
+      setHasMore(posts.length === BATCH_SIZE)
+      setCursor(nextCursor)
+
       setVideos(prev => {
-        const deduped = newVideos.filter(v => !prev.some(p => p.id === v.id))
-        return pageNum === 0 ? newVideos : [...prev, ...deduped]
+        if (isReset) return posts
+        const deduped = posts.filter((v: Video) => !prev.some(p => p.id === v.id))
+        return [...prev, ...deduped]
       })
-      setPage(pageNum + 1)
 
       // Batch-fetch follow statuses for all creators in this page
-      const creatorIds = newVideos.map(v => v.users?.id).filter(Boolean) as string[]
+      const creatorIds = posts.map((v: Video) => v.users?.id).filter(Boolean) as string[]
       loadFollowStatuses(creatorIds)
+    } catch (err) {
+      console.error('[VideoFeed] loadFeed error:', err)
     } finally {
       setLoading(false)
     }
-  }, [feedFilter, loading, fetchForYou, fetchFollowing, loadFollowStatuses])
+  }, [feedFilter, loading, loadFollowStatuses])
 
-  // ── Reset feed when filter changes ────────────────────────────
+  // ── Reset feed when filter changes ────────────────────────
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0
 
     setVideos([])
-    setPage(0)
+    setCursor(null)
     setHasMore(true)
     setFollowingMap({})
     // Load first page after state resets on next tick
-    setTimeout(() => loadPage(0, user?.id ?? null), 0)
+    setTimeout(() => loadFeed(null, true), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedFilter])
 
   const handleLoadMore = useCallback(() => {
-    if (!loading && hasMore) loadPage(page, user?.id ?? null)
-  }, [loading, hasMore, page, user?.id, loadPage])
+    if (!loading && hasMore && cursor) loadFeed(cursor, false)
+  }, [loading, hasMore, cursor, loadFeed])
 
-  // ── Empty state for Following tab ─────────────────────────────
+  // Track virtualizer to trigger infinite scroll
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const lastIndex = virtualItems[virtualItems.length - 1]?.index
+
+  useEffect(() => {
+    if (lastIndex !== undefined && lastIndex >= videos.length - 3) {
+      handleLoadMore()
+    }
+  }, [lastIndex, videos.length, handleLoadMore])
+
+  // Prevent scroll jumping when new batch appends
+  useEffect(() => {
+    rowVirtualizer.measure()
+  }, [videos.length, rowVirtualizer])
+
+  // ── Preload next videos dynamically ───────────────
+  const currentIndex = activeVideoId
+    ? videos.findIndex(v => v.id === activeVideoId)
+    : 0
+
+  const nextVideo = videos[currentIndex + 1]
+  const nextNextVideo = videos[currentIndex + 2]
+
+  // ── Empty state for Following tab ─────────────────────────
   const showEmptyFollowing =
     feedFilter === 'following' && !loading && videos.length === 0
 
   return (
     <div
       ref={scrollRef}
-      className="h-[100dvh] w-full overflow-y-scroll snap-y snap-mandatory no-scrollbar"
+      className="h-[100dvh] w-full overflow-y-scroll snap-y snap-mandatory no-scrollbar relative"
     >
-      {videos.map((video, index) => (
-        <VideoItem
-          key={video.id}
-          video={video}
-          index={index}
-          initialFollowing={followingMap[video.users?.id] ?? false}
-          loadMore={index === videos.length - 2 && hasMore ? handleLoadMore : undefined}
-        />
-      ))}
+      <div
+        className="relative w-full"
+        style={{
+          height: `${rowVirtualizer.getTotalSize()}px`,
+        }}
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+          const video = videos[virtualItem.index]
+          if (!video) return null
 
-      {/* Loading skeleton */}
+          return (
+            <div
+              key={virtualItem.key}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: `${virtualItem.size}px`,
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <VideoItem
+                video={video}
+                index={virtualItem.index}
+                initialFollowing={followingMap[video.users?.id] ?? false}
+              // Disconnect local loadMore from VideoItem, we now handle it globally
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Skeleton reel placeholder */}
       {loading && videos.length === 0 && (
-        <div className="h-[100dvh] w-full flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4 text-white/50">
-            <div className="w-10 h-10 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
-            <span className="text-sm">Loading feed...</span>
+        <div className="h-[100dvh] w-full relative bg-gray-900 animate-pulse overflow-hidden">
+          {/* Fake action buttons */}
+          <div className="absolute bottom-20 right-4 flex flex-col gap-5 items-center z-20">
+            <div className="w-12 h-12 rounded-full bg-gray-700" />
+            <div className="w-10 h-10 rounded-full bg-gray-700" />
+            <div className="w-10 h-10 rounded-full bg-gray-700" />
+            <div className="w-10 h-10 rounded-full bg-gray-700" />
+            <div className="w-12 h-12 rounded-full bg-gray-700 mt-2" />
           </div>
+          {/* Fake caption area */}
+          <div className="absolute bottom-[80px] left-4 right-20 z-20 flex flex-col gap-3">
+            <div className="w-28 h-4 bg-gray-700 rounded" />
+            <div className="w-48 h-3 bg-gray-700 rounded" />
+            <div className="w-36 h-3 bg-gray-700 rounded" />
+            <div className="w-44 h-6 bg-gray-700 rounded-full mt-2" />
+          </div>
+          {/* Gradient overlay */}
+          <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
         </div>
       )}
 
@@ -191,6 +225,28 @@ export default function VideoFeed({ initialVideos }: Props) {
             Explore For You
           </button>
         </div>
+      )}
+
+      {/* Hidden pre-buffer mounts (DOM-isolated) */}
+      {nextVideo && (
+        <video
+          src={getOptimizedVideoUrl(nextVideo.video_url)}
+          preload="auto"
+          muted
+          playsInline
+          disablePictureInPicture
+          style={{ display: 'none' }}
+        />
+      )}
+      {nextNextVideo && (
+        <video
+          src={getOptimizedVideoUrl(nextNextVideo.video_url)}
+          preload="metadata"
+          muted
+          playsInline
+          disablePictureInPicture
+          style={{ display: 'none' }}
+        />
       )}
     </div>
   )

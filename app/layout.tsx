@@ -21,6 +21,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* CDN preconnect — eliminates DNS + TLS handshake latency */}
+        <link rel="preconnect" href="https://res.cloudinary.com" />
+        <link rel="dns-prefetch" href="https://res.cloudinary.com" />
+        <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL!} />
+        <link rel="dns-prefetch" href={process.env.NEXT_PUBLIC_SUPABASE_URL!} />
+      </head>
       <body className={inter.className}>
         <AuthProvider>
           <div className="flex h-[100dvh] w-full overflow-hidden bg-black text-white antialiased">
@@ -52,6 +59,8 @@ export default function RootLayout({
               <BottomNav />
             </div>
 
+            {/* Next.js hydrated Modal Portal target */}
+            <div id="modal-root" />
           </div>
         </AuthProvider>
       </body>

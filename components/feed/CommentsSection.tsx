@@ -6,6 +6,8 @@ import { Comment } from '@/types'
 import { useVideoStore } from '@/lib/store/useVideoStore'
 import { deleteComment, toggleCommentLike } from '@/app/actions/comment-actions'
 import { Heart, Trash2, Reply } from 'lucide-react'
+import { ClickableAvatar } from '@/components/profile/ClickableAvatar'
+import Link from 'next/link'
 
 export function CommentsSection() {
     const { activeVideoId, incrementCommentCount, setCommentCount, decrementLikeCount } = useVideoStore()
@@ -216,14 +218,16 @@ export function CommentsSection() {
                                 )}
                                 <div className="flex gap-3">
                                     <div className={`rounded-full bg-gray-700 overflow-hidden shrink-0 mt-1 ${isReply ? 'w-6 h-6' : 'w-8 h-8'}`}>
-                                        {c.users?.avatar_url ? (
-                                            <img src={c.users.avatar_url} alt="" className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full bg-gradient-to-tr from-brand-secondary to-brand-primary" />
-                                        )}
+                                        <ClickableAvatar
+                                            src={c.users?.avatar_url || null}
+                                            username={c.users?.username}
+                                            className="w-full h-full"
+                                        />
                                     </div>
                                     <div className="flex flex-col flex-1">
-                                        <span className="font-bold border-gray-400 text-xs text-white/70">@{c.users?.username || 'user'}</span>
+                                        <Link href={`/profile/${c.users?.id || 'me'}`} prefetch className="font-bold border-gray-400 text-xs text-white/70 hover:underline">
+                                            @{c.users?.username || 'user'}
+                                        </Link>
                                         <p className="text-sm mt-0.5 break-words text-white/90 leading-tight">
                                             {c.content}
                                         </p>

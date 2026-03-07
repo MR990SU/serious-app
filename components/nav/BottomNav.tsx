@@ -4,6 +4,7 @@ import { Home, Search, Plus, Bell, User } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import { useAuth } from '@/components/AuthProvider'
+import { ClickableAvatar } from '@/components/profile/ClickableAvatar'
 
 export default function BottomNav() {
   const pathname = usePathname()
@@ -51,7 +52,7 @@ export default function BottomNav() {
         >
           {profile?.avatar_url ? (
             <div className={`w-7 h-7 rounded-full overflow-hidden ${pathname.includes('/profile') ? 'border-[1.5px] border-white' : ''}`}>
-              <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+              <ClickableAvatar src={profile.avatar_url} username={profile.username || undefined} className="w-full h-full" />
             </div>
           ) : (
             <User size={24} className={pathname.includes('/profile') ? 'fill-white' : ''} />

@@ -4,6 +4,7 @@ import { Home, User, Plus } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import { useAuth } from '@/components/AuthProvider'
+import { ClickableAvatar } from '@/components/profile/ClickableAvatar'
 
 export default function SideNav() {
     const pathname = usePathname()
@@ -38,7 +39,7 @@ export default function SideNav() {
                         >
                             {link.label === 'Profile' && profile?.avatar_url ? (
                                 <div className={`w-6 h-6 rounded-full overflow-hidden shrink-0 ${isActive ? 'border border-brand-secondary' : 'border border-transparent'}`}>
-                                    <img src={profile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+                                    <ClickableAvatar src={profile.avatar_url} username={profile.username || undefined} className="w-full h-full" />
                                 </div>
                             ) : (
                                 <link.icon size={24} className={isActive ? 'text-brand-secondary' : ''} />

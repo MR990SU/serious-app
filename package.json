@@ -11,14 +11,17 @@
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.95.3",
+    "@tanstack/react-virtual": "^3.13.21",
     "cloudinary": "^2.9.0",
     "clsx": "^2.1.1",
+    "framer-motion": "^12.35.1",
     "lucide-react": "^0.564.0",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-intersection-observer": "^10.0.2",
     "tailwind-merge": "^3.4.1",
+    "vaul": "^1.1.2",
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
   },
