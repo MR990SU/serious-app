@@ -1,13 +1,13 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Profile, Video } from '@/types'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toggleFollow } from '@/app/actions/profile-actions'
-import Link from 'next/link'
 import Image from 'next/image'
 import { Grid, Heart, LogOut } from 'lucide-react'
 import { EditProfileModal } from '@/components/profile/EditProfileModal'
+import { ProfileVideoModal } from '@/components/profile/ProfileVideoModal'
 import { getThumbnailUrl } from '@/lib/utils/video-utils'
 
 export default function ProfilePage() {
@@ -23,7 +23,20 @@ export default function ProfilePage() {
 
     const params = useParams()
     const router = useRouter()
+    const searchParams = useSearchParams()
     const supabase = createClient()
+
+    // ── Modal state driven by URL ?v= param ──────────────────────
+    const activeVideoId = searchParams.get('v')
+    const activeVideo = videos.find(v => v.id === activeVideoId) || null
+
+    const openVideoModal = useCallback((video: Video) => {
+        router.push(`?v=${video.id}`, { scroll: false })
+    }, [router])
+
+    const closeVideoModal = useCallback(() => {
+        router.back()
+    }, [router])
 
     // Handle 'me' dynamic replacement based on currently authed user
     const fetchTargetId = async () => {
@@ -206,7 +219,11 @@ export default function ProfilePage() {
             {/* Videos Grid — uses next/image thumbnails instead of full <video> elements */}
             <div className="grid grid-cols-3 gap-[1px] max-w-xl mx-auto bg-black">
                 {videos.map((video) => (
-                    <Link href={`/?v=${video.id}`} key={video.id} className="relative aspect-[3/4] bg-gray-900 group overflow-hidden">
+                    <button
+                        key={video.id}
+                        onClick={() => openVideoModal(video)}
+                        className="relative aspect-[3/4] bg-gray-900 group overflow-hidden cursor-pointer text-left"
+                    >
                         <Image
                             src={getThumbnailUrl(video.video_url)}
                             alt={video.caption || 'Video thumbnail'}
@@ -219,7 +236,7 @@ export default function ProfilePage() {
                             <svg className="w-3 h-3 stroke-white fill-transparent" viewBox="0 0 24 24" strokeWidth="2"><path d="m2 12 5.25 5L22 4"></path></svg>
                             {video.view_count || 0}
                         </div>
-                    </Link>
+                    </button>
                 ))}
                 {videos.length === 0 && (
                     <div className="col-span-3 text-center text-gray-500 py-20 bg-black">
@@ -234,6 +251,16 @@ export default function ProfilePage() {
                 currentBio={profile.bio || ''}
                 currentAvatar={profile.avatar_url || null}
             />
+
+            {/* Profile Video Modal */}
+            {activeVideo && (
+                <ProfileVideoModal
+                    video={activeVideo}
+                    videos={videos}
+                    onClose={closeVideoModal}
+                    onNavigate={openVideoModal}
+                />
+            )}
         </div>
     )
 }

@@ -71,6 +71,10 @@ export async function toggleCommentsEnabled(videoId: string) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { success: false, error: 'Not authenticated' }
 
+    if (isRateLimited(user.id, 'toggleCommentsEnabled', 10, 60_000)) {
+        return { success: false, error: 'Too many requests' }
+    }
+
     // Fetch video to verify ownership and get current state
     const { data: video, error: fetchErr } = await supabase
         .from('videos')
@@ -98,6 +102,10 @@ export async function deleteVideo(videoId: string) {
     const supabase = await getSupabase()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return { success: false, error: 'Not authenticated' }
+
+    if (isRateLimited(user.id, 'deleteVideo', 5, 60_000)) {
+        return { success: false, error: 'Too many requests' }
+    }
 
     // Fetch video to verify ownership and get Cloudinary URL for cleanup
     const { data: video, error: fetchErr } = await supabase
