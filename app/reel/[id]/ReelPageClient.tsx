@@ -98,7 +98,13 @@ export default function ReelPageClient({ video }: Props) {
             </div>
 
             {/* Action buttons — avatarless version for reel detail page */}
-            <ActionButtons video={video} />
+            <ActionButtons
+                video={video}
+                initialLiked={false}
+                initialSaved={false}
+                initialFollowing={false}
+                showComments={false}
+            />
         </div>
     )
 }

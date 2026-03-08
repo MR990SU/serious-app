@@ -21,14 +21,15 @@ interface Props {
 }
 
 export default memo(function VideoItem({ video, index, initialFollowing = false }: Props) {
-  const { setActiveVideo } = useVideoStore()
+  const { setActiveVideo, isMuted, setMuted } = useVideoStore()
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [isMuted, setIsMuted] = useState(index === 0) // first video starts muted for autoplay compliance
 
   // Like state
   const [heartTrigger, setHeartTrigger] = useState(0)
+  const [heartPos, setHeartPos] = useState({ x: 0, y: 0 })
   const [isLiked, setIsLiked] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
 
@@ -84,7 +85,11 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
     })
   }, [video.id, supabase])
 
-  const handleDoubleTap = async () => {
+  const handleDoubleTap = async (e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    setHeartPos({ x, y })
     setHeartTrigger(Date.now())
     if (!isLiked) {
       setIsLiked(true)
@@ -103,17 +108,26 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
 
   // Toggle mute + show 800ms sound overlay
   const toggleMute = () => {
-    setIsMuted(prev => !prev)
+    setMuted(!isMuted)
     if (soundTimerRef.current) clearTimeout(soundTimerRef.current)
     setShowSoundIndicator(true)
     soundTimerRef.current = setTimeout(() => setShowSoundIndicator(false), 800)
   }
 
-  // Double tap = like | Single tap = mute toggle
+  // Double tap = like | Single tap = play/pause toggle
   const tapBind = useDoubleTap(
-    () => { handleDoubleTap() },   // double tap
+    (e) => { handleDoubleTap(e) },   // double tap
     300,
-    { onSingleTap: () => toggleMute() } // single tap
+    {
+      onSingleTap: () => {
+        if (!videoRef.current) return
+        if (videoRef.current.paused) {
+          videoRef.current.play()
+        } else {
+          videoRef.current.pause()
+        }
+      }
+    }
   )
 
   // Playback control
@@ -137,11 +151,19 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
         incrementViewCount(video.id)
         viewLogged.current = true
       }
+
+      // Preload the next video in the feed immediately to reduce buffering delays
+      const nextContainer = containerRef.current?.parentElement?.nextElementSibling as HTMLElement | null
+      const nextVideo = nextContainer?.querySelector('video')
+      if (nextVideo) {
+        nextVideo.preload = 'auto'
+      }
+
       const playPromise = videoRef.current.play()
       if (playPromise !== undefined) {
         playPromise.catch((error: { name: string }) => {
           if (error.name === 'NotAllowedError') {
-            setIsMuted(true)
+            setMuted(true)
             if (videoRef.current) {
               videoRef.current.muted = true
               videoRef.current.play().catch((e: unknown) => console.error('Fallback playback failed', e))
@@ -153,7 +175,7 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
       videoRef.current?.pause()
       if (videoRef.current) videoRef.current.currentTime = 0
     }
-  }, [isPlaying, video.media_type, video.id, video.likes_count, video.comments_count, index])
+  }, [isPlaying, video.media_type, video.id, video.likes_count, video.comments_count, index, setActiveVideo, setMuted])
 
   const optimizedVideoUrl = getOptimizedVideoUrl(video.video_url)
   const optimizedPosterUrl = getOptimizedPosterUrl(video.video_url)
@@ -225,26 +247,28 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
         )}
 
         {/* Heart Overlay */}
-        <HeartAnimation triggerTimestamp={heartTrigger} />
+        <HeartAnimation triggerTimestamp={heartTrigger} x={heartPos.x} y={heartPos.y} />
 
         {/* Sound indicator overlay — Instagram style */}
-        <AnimatePresence mode="wait">
-          {showSoundIndicator && (
-            <motion.div
-              key={isMuted ? 'muted' : 'unmuted'}
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.8, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none"
-            >
-              {isMuted
-                ? <VolumeX size={64} className="text-white drop-shadow-lg" />
-                : <Volume2 size={64} className="text-white drop-shadow-lg" />
-              }
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+          <AnimatePresence mode="wait">
+            {showSoundIndicator && (
+              <motion.div
+                key={isMuted ? 'muted' : 'unmuted'}
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="flex items-center justify-center"
+              >
+                {isMuted
+                  ? <VolumeX size={64} className="text-white drop-shadow-lg" />
+                  : <Volume2 size={64} className="text-white drop-shadow-lg" />
+                }
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         {/* Bottom gradient overlay */}
         <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10 pointer-events-none" />
@@ -256,7 +280,17 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
           </Link>
           <div className="text-sm">
             <p className={`${isExpanded ? '' : 'line-clamp-2'} transition-all`}>
-              {video.caption}
+              {video.caption?.split(/(#[\w]+|@[\w]+)/g).map((part, i) => {
+                if (part.startsWith('#')) {
+                  const tag = part.slice(1)
+                  return <Link key={i} href={`/discover?q=${tag}`} onClick={(e) => e.stopPropagation()} className="hover:underline">{part}</Link>
+                }
+                if (part.startsWith('@')) {
+                  const username = part.slice(1)
+                  return <Link key={i} href={`/profile/${username}`} onClick={(e) => e.stopPropagation()} className="hover:underline">{part}</Link>
+                }
+                return <span key={i}>{part}</span>
+              })}
             </p>
             {video.caption && video.caption.length > 50 && (
               <button onClick={() => setIsExpanded(!isExpanded)} className="font-bold text-white/70 hover:text-white mt-1">

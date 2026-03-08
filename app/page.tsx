@@ -8,10 +8,13 @@ export default async function Home() {
   const supabase = await createClient()
 
   // Try trending view first for reels
-  let { data: initialVideos, error } = await supabase
+  let initialVideos: any[] | null = null
+  const { data: trendingVideos, error } = await supabase
     .from('trending_videos')
     .select('*, users:profiles(id, username, avatar_url)')
     .limit(4)
+
+  initialVideos = trendingVideos
 
   if (error || !initialVideos || initialVideos.length === 0) {
     if (error && Object.keys(error).length > 0) {

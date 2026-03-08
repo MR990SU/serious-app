@@ -86,8 +86,8 @@ export async function PATCH() {
         if (error) throw error
 
         return NextResponse.json({ success: true })
-    } catch (e: any) {
-        console.error('[/api/notifications/seen] Error:', e.message)
-        return NextResponse.json({ success: false, error: e.message }, { status: 500 })
+    } catch (e: unknown) {
+        console.error('[/api/notifications/seen] Error:', (e as Error).message)
+        return NextResponse.json({ success: false, error: (e as Error).message }, { status: 500 })
     }
 }

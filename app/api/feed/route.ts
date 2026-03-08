@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
     }))
 
     // ── Apply Suppression Logic ───────────────────────────────────────
-    let posts = []
+    const posts = []
     for (const post of normalizedData) {
         if (posts.length >= FEED_LIMIT) break // We hit our 12 goal
 

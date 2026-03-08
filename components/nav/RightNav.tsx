@@ -1,5 +1,4 @@
 'use client'
-import Image from 'next/image'
 import Link from 'next/link'
 import { CommentsSection } from '@/components/feed/CommentsSection'
 import { useState, useEffect } from 'react'
@@ -26,7 +25,7 @@ export default function RightNav() {
             if (data) setCreators(data as Profile[])
         }
         fetchCreators()
-    }, [user])
+    }, [user, supabase])
 
     return (
         <div className="h-full flex flex-col gap-8 text-sm max-h-screen">

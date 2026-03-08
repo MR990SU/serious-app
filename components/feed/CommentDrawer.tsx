@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { X, ChevronDown } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { X } from 'lucide-react'
 import { CommentsSection } from './CommentsSection'
 import { useVideoStore } from '@/lib/store/useVideoStore'
 

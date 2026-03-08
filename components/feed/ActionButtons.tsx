@@ -10,6 +10,7 @@ import { CommentDrawer } from './CommentDrawer'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ReelOptionsDrawer } from './ReelOptionsDrawer'
 import { MoreHorizontal } from 'lucide-react'
 import { ClickableAvatar } from '@/components/profile/ClickableAvatar'
@@ -19,9 +20,10 @@ interface Props {
   initialFollowing?: boolean
   initialLiked?: boolean
   initialSaved?: boolean
+  showComments?: boolean
 }
 
-export default function ActionButtons({ video, initialFollowing = false, initialLiked = false, initialSaved = false }: Props) {
+export default function ActionButtons({ video, initialFollowing = false, initialLiked = false, initialSaved = false, showComments = true }: Props) {
   const { activeVideoId, activeVideoLikes, activeVideoComments, incrementLikeCount, decrementLikeCount } = useVideoStore()
   const isActive = activeVideoId === video.id
 
@@ -29,7 +31,6 @@ export default function ActionButtons({ video, initialFollowing = false, initial
   const { user } = useAuth()
 
   const [localLikes, setLocalLikes] = useState(video.likes_count)
-  const [liked, setLiked] = useState(initialLiked)
   const [saved, setSaved] = useState(initialSaved)
   const [savedAudio, setSavedAudio] = useState(false)
   const [following, setFollowing] = useState(initialFollowing)
@@ -40,6 +41,7 @@ export default function ActionButtons({ video, initialFollowing = false, initial
   const [mounted, setMounted] = useState(false)
 
   const supabase = createClient()
+  const router = useRouter()
 
   // Only access window after client-side hydration
   useEffect(() => { setMounted(true) }, [])
@@ -56,21 +58,18 @@ export default function ActionButtons({ video, initialFollowing = false, initial
       .eq('following_id', video.users.id)
       .maybeSingle()
       .then(({ data }) => setFollowing(!!data))
-  }, [video.users.id, user?.id, initialFollowing])
+  }, [video.users.id, user?.id, initialFollowing, supabase, user])
 
-  // Check initial like state on mount (if not pre-loaded)
-  useEffect(() => {
-    if (initialLiked) return               // already provided
-    if (!user) return
+  // Issue 1: Derive `liked` state synchronously from store and video props.
+  // - If it's the active video, we calculate liked based on the delta between activeVideoLikes and the video's original likes_count.
+  // - If it's NOT the active video, we calculate it based on localLikes vs video's original likes_count.
+  const displayLikes = isActive ? activeVideoLikes : localLikes
 
-    supabase
-      .from('likes')
-      .select('id')
-      .eq('video_id', video.id)
-      .eq('user_id', user.id)
-      .maybeSingle()
-      .then(({ data }) => { if (data) setLiked(true) })
-  }, [video.id, user?.id, initialLiked])
+  // A video is liked if the current display count is higher than its initial count without a like,
+  // OR if its initial count already included our like and hasn't gone down.
+  const baseCount = initialLiked ? Math.max(0, video.likes_count - 1) : video.likes_count
+  const liked = displayLikes > baseCount
+
 
   // Check initial save state on mount
   useEffect(() => {
@@ -94,26 +93,28 @@ export default function ActionButtons({ video, initialFollowing = false, initial
         .maybeSingle()
         .then(({ data }) => { if (data) setSavedAudio(true) })
     }
-  }, [video.id, video.audio_id, user?.id, initialSaved])
+  }, [video.id, video.audio_id, user?.id, initialSaved, supabase, user])
 
-  const displayLikes = isActive ? activeVideoLikes : localLikes
   const displayComments = isActive ? activeVideoComments : (video.comments_count || 0)
   const isOwnVideo = user?.id === video.users.id
 
   const handleLike = async () => {
     const newLiked = !liked
-    setLiked(newLiked)
+
+    // Optimistic UI update
     if (isActive) {
-      newLiked ? incrementLikeCount() : decrementLikeCount()
+      if (newLiked) incrementLikeCount()
+      else decrementLikeCount()
     } else {
       setLocalLikes(prev => newLiked ? prev + 1 : prev - 1)
     }
 
     const result = await toggleLike(video.id)
     if (result && !result.success) {
-      setLiked(!newLiked)
+      // Revert on failure
       if (isActive) {
-        newLiked ? decrementLikeCount() : incrementLikeCount()
+        if (newLiked) decrementLikeCount()
+        else incrementLikeCount()
       } else {
         setLocalLikes(prev => newLiked ? prev - 1 : prev + 1)
       }
@@ -142,7 +143,11 @@ export default function ActionButtons({ video, initialFollowing = false, initial
   }
 
   const handleSaveAudio = async () => {
-    if (!user || !video.audio_id) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (!video.audio_id) return
     const newSavedAudio = !savedAudio
     setSavedAudio(newSavedAudio)
 
@@ -218,16 +223,18 @@ export default function ActionButtons({ video, initialFollowing = false, initial
         </button>
 
         {/* Comment */}
-        <button
-          onClick={() => setIsCommentOpen(true)}
-          className="flex flex-col items-center group shrink-0"
-          aria-label="Open comments"
-        >
-          <div className="p-2 rounded-full transition-transform group-hover:scale-110">
-            <MessageCircle size={30} className="text-white fill-white/20" />
-          </div>
-          <span className="text-xs font-bold mt-1 text-white/90">{displayComments}</span>
-        </button>
+        {showComments && (
+          <button
+            onClick={() => setIsCommentOpen(true)}
+            className="flex flex-col items-center group shrink-0"
+            aria-label="Open comments"
+          >
+            <div className="p-2 rounded-full transition-transform group-hover:scale-110">
+              <MessageCircle size={30} className="text-white fill-white/20" />
+            </div>
+            <span className="text-xs font-bold mt-1 text-white/90">{displayComments}</span>
+          </button>
+        )}
 
         {/* Save */}
         <button

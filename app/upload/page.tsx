@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { CheckCircle2, UploadCloud, Film, Image as ImageIcon, Music, FileAudio } from 'lucide-react'
+import { CheckCircle2, UploadCloud, Film, Image as ImageIcon, FileAudio } from 'lucide-react'
 import { Audio } from '@/types'
 
 type UploadMode = 'video' | 'image_audio' | 'video_audio'
@@ -47,8 +47,6 @@ export default function UploadPage() {
   // Audio library selection (for image_audio mode only)
   const [audioList, setAudioList] = useState<Audio[]>([])
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null)
-  const [isAudioDrawerOpen, setIsAudioDrawerOpen] = useState(false)
-
   const supabase = createClient()
   const router = useRouter()
 
@@ -138,7 +136,7 @@ export default function UploadPage() {
       .createSignedUploadUrl(path)
     if (signedError || !signedData) throw signedError ?? new Error('Failed to get signed URL')
 
-    const { signedUrl, token } = signedData
+    const { signedUrl } = signedData
 
     // Step 2: XHR PUT to the signed URL — exposes onprogress events
     await new Promise<void>((resolve, reject) => {
@@ -189,7 +187,7 @@ export default function UploadPage() {
       let imageUrl: string | null = null
       let audioUrl: string | null = null
       let thumbnailUrl: string | null = null
-      let audioId: string | null = selectedAudioId
+      const audioId: string | null = selectedAudioId
 
       // ── Video only ──────────────────────────────────────
       if (uploadMode === 'video') {
@@ -262,16 +260,14 @@ export default function UploadPage() {
       setPhase('done')
       setTimeout(() => router.push('/'), 1500)
 
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('Upload failed:', e)
-      setError(e.message || 'Upload failed. Please try again.')
+      setError((e as Error).message || 'Upload failed. Please try again.')
       setPhase('error')
     }
   }
 
   const isUploading = phase === 'uploading' || phase === 'processing'
-  const selectedAudioInfo = audioList.find(a => a.id === selectedAudioId)
-
   const phaseLabel: Record<UploadPhase, string> = {
     idle: 'Post to Feed',
     uploading: 'Uploading to Storage...',
@@ -337,8 +333,8 @@ export default function UploadPage() {
           />
         )}
 
-        {/* Audio file slot — mode: video_audio */}
-        {uploadMode === 'video_audio' && (
+        {/* Audio file slot — modes: video_audio, image_audio */}
+        {(uploadMode === 'video_audio' || uploadMode === 'image_audio') && (
           <FileSlot
             label="Audio File"
             icon={<FileAudio size={16} />}
@@ -347,61 +343,6 @@ export default function UploadPage() {
             onPick={e => pickFile(e, 'audio')}
             disabled={isUploading}
           />
-        )}
-
-        {/* Audio library drawer — modes: video (optional), image_audio */}
-        {(uploadMode === 'image_audio' || uploadMode === 'video') && (
-          <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setIsAudioDrawerOpen(!isAudioDrawerOpen)}
-              className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-gray-800 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <div className="bg-white/10 p-2 rounded-full">
-                  <Music size={18} className="text-brand-accent" />
-                </div>
-                <div className="text-left">
-                  <p className="font-semibold text-sm">
-                    {selectedAudioInfo ? selectedAudioInfo.title : 'Add Audio'}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    {selectedAudioInfo ? selectedAudioInfo.artist : 'Select a track from the library'}
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-full text-white/80">
-                {selectedAudioId ? 'Change' : 'Browse'}
-              </span>
-            </button>
-
-            {isAudioDrawerOpen && (
-              <div className="border-t border-gray-800 bg-gray-950 p-2 max-h-60 overflow-y-auto">
-                <button
-                  onClick={() => { setSelectedAudioId(null); setIsAudioDrawerOpen(false) }}
-                  className={`w-full text-left p-3 rounded-lg text-sm mb-1 ${!selectedAudioId ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800'}`}
-                >
-                  Original Audio (None)
-                </button>
-                {audioList.map(audio => (
-                  <button
-                    key={audio.id}
-                    onClick={() => { setSelectedAudioId(audio.id); setIsAudioDrawerOpen(false) }}
-                    className={`w-full text-left p-3 rounded-lg text-sm mb-1 flex justify-between items-center ${selectedAudioId === audio.id ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800 text-white'}`}
-                  >
-                    <div>
-                      <p className="font-bold">{audio.title}</p>
-                      <p className="text-xs opacity-70">{audio.artist}</p>
-                    </div>
-                    <span className="text-xs opacity-50">{audio.used_count.toLocaleString()} posts</span>
-                  </button>
-                ))}
-                {audioList.length === 0 && (
-                  <div className="p-4 text-center text-sm text-gray-500">No audio tracks available.</div>
-                )}
-              </div>
-            )}
-          </div>
         )}
 
         {/* Caption */}

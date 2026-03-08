@@ -3,7 +3,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Audio, Video } from '@/types'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import Image from 'next/image'
 import { Music, Disc3, ArrowLeft, Bookmark } from 'lucide-react'
 import { ProfilePostViewer } from '@/components/profile/ProfilePostViewer'
 import { PostCard } from '@/components/feed/PostCard'
@@ -104,7 +103,7 @@ export default function AudioPage() {
         }
 
         loadInitialData()
-    }, [params.id])
+    }, [params.id, fetchVideos, supabase])
 
     const loadMoreVideos = async () => {
         if (!hasMore || !cursor || !audio) return

@@ -45,8 +45,8 @@ export async function deleteComment(commentId: string) {
 
         if (error) throw error
         return { success: true }
-    } catch (error: any) {
-        return { success: false, error: error.message }
+    } catch (error: unknown) {
+        return { success: false, error: (error as Error).message }
     }
 }
 
@@ -83,8 +83,8 @@ export async function toggleCommentLike(commentId: string) {
             if (error) throw error
             return { success: true, liked: true }
         }
-    } catch (error: any) {
-        return { success: false, error: error.message }
+    } catch (error: unknown) {
+        return { success: false, error: (error as Error).message }
     }
 }
 

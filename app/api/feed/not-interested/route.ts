@@ -58,8 +58,8 @@ export async function POST(request: NextRequest) {
             if (insertError) throw insertError
             return NextResponse.json({ success: true, isNotInterested: true })
         }
-    } catch (e: any) {
-        console.error('[/api/feed/not-interested]', e.message)
-        return NextResponse.json({ success: false, error: e.message }, { status: 500 })
+    } catch (e: unknown) {
+        console.error('[/api/feed/not-interested]', (e as Error).message)
+        return NextResponse.json({ success: false, error: (e as Error).message }, { status: 500 })
     }
 }

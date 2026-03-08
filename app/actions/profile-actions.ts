@@ -90,8 +90,8 @@ export async function updateProfile(avatarUrl: string | null, bio: string | null
             .update({ avatar_url: avatarUrl, bio: sanitizedBio })
             .eq('id', user.id)
         return { success: true }
-    } catch (error: any) {
-        return { success: false, error: error.message }
+    } catch (error: unknown) {
+        return { success: false, error: (error as Error).message }
     }
 }
 
@@ -166,8 +166,8 @@ export async function deleteCloudinaryImage(publicId: string) {
     try {
         await cloudinary.uploader.destroy(publicId)
         return { success: true }
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Failed to delete from Cloudinary:', error)
-        return { success: false, error: error.message }
+        return { success: false, error: (error as Error).message }
     }
 }

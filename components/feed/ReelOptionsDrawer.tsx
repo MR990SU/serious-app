@@ -1,6 +1,7 @@
 'use client'
 import { Drawer } from 'vaul'
 import { Bookmark, Music, ShieldMinus, Ban, PlayCircle, Loader2 } from 'lucide-react'
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden'
 import { Video } from '@/types'
 import { useAuth } from '@/components/AuthProvider'
 import { useVideoStore } from '@/lib/store/useVideoStore'
@@ -78,6 +79,9 @@ export function ReelOptionsDrawer({
             <Drawer.Portal>
                 <Drawer.Overlay className="fixed inset-0 bg-black/40 z-50 backdrop-blur-sm" onClick={onClose} />
                 <Drawer.Content className="bg-[#111] border-t border-gray-800 flex flex-col rounded-t-[20px] h-[55vh] mt-24 fixed bottom-0 left-0 right-0 z-50 outline-none text-white max-w-lg mx-auto">
+                    <VisuallyHidden>
+                        <Drawer.Title>Reel options</Drawer.Title>
+                    </VisuallyHidden>
                     <div className="p-4 bg-[#111] rounded-t-[20px] flex-1">
                         <div className="mx-auto w-12 h-1.5 flex-shrink-0 rounded-full bg-gray-600 mb-6" />
 

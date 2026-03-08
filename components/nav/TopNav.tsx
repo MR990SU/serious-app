@@ -1,5 +1,4 @@
 'use client'
-import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useVideoStore } from '@/lib/store/useVideoStore'
 
@@ -22,8 +21,8 @@ export default function TopNav() {
           <button
             onClick={() => setFeedFilter('forYou')}
             className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all duration-200 ${feedFilter === 'forYou'
-                ? 'bg-white text-black shadow-sm'
-                : 'text-white/60 hover:text-white'
+              ? 'bg-white text-black shadow-sm'
+              : 'text-white/60 hover:text-white'
               }`}
           >
             For You
@@ -31,8 +30,8 @@ export default function TopNav() {
           <button
             onClick={() => setFeedFilter('following')}
             className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-all duration-200 ${feedFilter === 'following'
-                ? 'bg-white text-black shadow-sm'
-                : 'text-white/60 hover:text-white'
+              ? 'bg-white text-black shadow-sm'
+              : 'text-white/60 hover:text-white'
               }`}
           >
             Following

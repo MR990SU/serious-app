@@ -2,7 +2,6 @@ import { v2 as cloudinary } from 'cloudinary'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
-import { isRateLimited } from '@/lib/rate-limit'
 
 cloudinary.config({
   cloud_name: process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME,
@@ -148,7 +147,7 @@ export async function POST(request: NextRequest) {
       resource_type: constraints.resource_type,
       allowed_formats: constraints.allowed_formats,
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[upload/sign] Signing error:', err)
     return Response.json({ error: 'Signing failed' }, { status: 500 })
   }

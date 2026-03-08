@@ -8,6 +8,7 @@ interface VideoStore {
     activeVideoComments: number
     feedFilter: FeedFilter
     autoPlayEnabled: boolean
+    isMuted: boolean
     setActiveVideo: (id: string, likes: number, comments: number) => void
     setCommentCount: (count: number) => void
     incrementCommentCount: () => void
@@ -15,6 +16,9 @@ interface VideoStore {
     decrementLikeCount: () => void
     setFeedFilter: (filter: FeedFilter) => void
     setAutoPlayEnabled: (enabled: boolean) => void
+    setMuted: (value: boolean) => void
+    currentIndex: number
+    setCurrentIndex: (index: number) => void
 }
 
 export const useVideoStore = create<VideoStore>((set) => ({
@@ -23,6 +27,8 @@ export const useVideoStore = create<VideoStore>((set) => ({
     activeVideoComments: 0,
     feedFilter: 'forYou',
     autoPlayEnabled: true,
+    isMuted: true,
+    currentIndex: 0,
 
     setActiveVideo: (id, likes, comments) =>
         set({ activeVideoId: id, activeVideoLikes: likes, activeVideoComments: comments }),
@@ -44,4 +50,10 @@ export const useVideoStore = create<VideoStore>((set) => ({
 
     setAutoPlayEnabled: (enabled) =>
         set({ autoPlayEnabled: enabled }),
+
+    setMuted: (value) =>
+        set({ isMuted: value }),
+
+    setCurrentIndex: (index) =>
+        set({ currentIndex: index }),
 }))

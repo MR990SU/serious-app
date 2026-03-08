@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { X, Upload, Loader2, Image as ImageIcon } from 'lucide-react'
-import { updateProfile, deleteCloudinaryImage } from '@/app/actions/profile-actions'
+import { updateProfile } from '@/app/actions/profile-actions'
 import { useRouter } from 'next/navigation'
 
 interface EditProfileModalProps {

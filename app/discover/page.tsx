@@ -1,11 +1,8 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import Link from 'next/link'
-import Image from 'next/image'
 import { Search } from 'lucide-react'
 import { Video } from '@/types'
-import { getThumbnailUrl } from '@/lib/utils/video-utils'
 import { PostCard } from '@/components/feed/PostCard'
 import { useRouter } from 'next/navigation'
 
@@ -17,38 +14,7 @@ export default function DiscoverPage() {
     const supabase = createClient()
     const router = useRouter()
 
-    // Debounce search
-    useEffect(() => {
-        const delayDebounceFn = setTimeout(async () => {
-            if (query) {
-                setLoading(true)
-                // Basic full text search across caption, or related users
-                const { data, error } = await supabase
-                    .from('videos')
-                    .select('*, users:profiles!inner(id, username, full_name, avatar_url)')
-                    .is('deleted_at', null)
-                    .or(`caption.ilike.%${query}%,users.username.ilike.%${query}%`)
-                    .limit(20)
-
-                if (!error && data) {
-                    // format the users array if it returns as array (rpc/postgREST joins sometimes do)
-                    const formattedData = data.map((v: any) => ({
-                        ...v,
-                        users: Array.isArray(v.users) ? v.users[0] : v.users
-                    })) as unknown as Video[]
-                    setResults(formattedData)
-                }
-                setLoading(false)
-            } else {
-                // If empty, fetch random popular reels
-                fetchPopular()
-            }
-        }, 500)
-
-        return () => clearTimeout(delayDebounceFn)
-    }, [query])
-
-    const fetchPopular = async () => {
+    const fetchPopular = useCallback(async () => {
         setLoading(true)
         try {
             const res = await fetch('/api/explore')
@@ -65,12 +31,46 @@ export default function DiscoverPage() {
             console.error('Failed to fetch explore feed:', error)
         }
         setLoading(false)
-    }
+    }, [])
+
+    // Debounce search
+    useEffect(() => {
+        const delayDebounceFn = setTimeout(async () => {
+            if (query) {
+                setLoading(true)
+                // Basic full text search across caption, or related users
+                const { data, error } = await supabase
+                    .from('videos')
+                    .select('*, users:profiles!inner(id, username, full_name, avatar_url)')
+                    .is('deleted_at', null)
+                    .or(`caption.ilike.%${query}%,users.username.ilike.%${query}%`)
+                    .limit(20)
+
+                if (!error && data) {
+                    // format the users array if it returns as array (rpc/postgREST joins sometimes do)
+                    const formattedData = data.map((v: unknown) => {
+                        const rec = v as Record<string, unknown>
+                        return {
+                            ...rec,
+                            users: Array.isArray(rec.users) ? rec.users[0] : rec.users
+                        }
+                    }) as unknown as Video[]
+                    setResults(formattedData)
+                }
+                setLoading(false)
+            } else {
+                // If empty, fetch random popular reels
+                fetchPopular()
+            }
+        }, 500)
+
+        return () => clearTimeout(delayDebounceFn)
+    }, [query, fetchPopular, supabase])
 
     // Load popular automatically on mount
     useEffect(() => {
         fetchPopular()
-    }, [])
+    }, [fetchPopular])
 
     return (
         <div className="h-full w-full bg-black flex flex-col pt-safe overflow-hidden pb-16 md:pb-0">

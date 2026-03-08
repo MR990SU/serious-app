@@ -25,6 +25,7 @@ export default function VideoFeed({ initialVideos }: Props) {
   const [hasMore, setHasMore] = useState(true)
   const [followingMap, setFollowingMap] = useState<Record<string, boolean>>({})
   const scrollRef = useRef<HTMLDivElement>(null)
+  const hasRestored = useRef(false)
 
   // Sentinel div at the bottom — triggers infinite scroll via IntersectionObserver
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -90,10 +91,12 @@ export default function VideoFeed({ initialVideos }: Props) {
   // Reset feed when filter changes
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0
+    hasRestored.current = false
     setVideos([])
     setCursor(null)
     setHasMore(true)
     setFollowingMap({})
+    useVideoStore.getState().setCurrentIndex(0)
     setTimeout(() => loadFeed(null, true), 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedFilter])
@@ -116,10 +119,28 @@ export default function VideoFeed({ initialVideos }: Props) {
     return () => observer.disconnect()
   }, [cursor, hasMore, loading, loadFeed])
 
-  const { activeVideoId } = useVideoStore()
+  const { activeVideoId, currentIndex: savedIndex, setCurrentIndex } = useVideoStore()
   const currentIndex = activeVideoId ? videos.findIndex(v => v.id === activeVideoId) : 0
   const nextVideo = videos[currentIndex + 1]
   const nextNextVideo = videos[currentIndex + 2]
+
+  // Persist the current reel index whenever the active video changes
+  useEffect(() => {
+    if (currentIndex >= 0) setCurrentIndex(currentIndex)
+  }, [activeVideoId, currentIndex, setCurrentIndex])
+
+  // One-shot scroll restoration — fires after videos populate, skipped on filter reset
+  useEffect(() => {
+    if (hasRestored.current) return
+    if (videos.length === 0 || savedIndex === 0) {
+      if (videos.length > 0) hasRestored.current = true
+      return
+    }
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: savedIndex * window.innerHeight })
+    }
+    hasRestored.current = true
+  }, [videos, savedIndex])
 
   const showEmptyFollowing = feedFilter === 'following' && !loading && videos.length === 0
 

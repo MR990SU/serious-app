@@ -4,18 +4,15 @@ import { createClient } from '@/lib/supabase/client'
 import { Profile, Video } from '@/types'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toggleFollow } from '@/app/actions/profile-actions'
-import Image from 'next/image'
 import Link from 'next/link'
 import { Grid, Heart, LogOut, Bookmark, Music } from 'lucide-react'
 import { EditProfileModal } from '@/components/profile/EditProfileModal'
 import { ProfilePostViewer } from '@/components/profile/ProfilePostViewer'
-import { getThumbnailUrl } from '@/lib/utils/video-utils'
 import { ClickableAvatar } from '@/components/profile/ClickableAvatar'
 import { PostCard } from '@/components/feed/PostCard'
 
 export default function ProfilePage() {
     const [profile, setProfile] = useState<Profile | null>(null)
-    const [videos, setVideos] = useState<Video[]>([])
     const [followers, setFollowers] = useState(0)
     const [following, setFollowing] = useState(0)
     const [likesCount, setLikesCount] = useState(0)
@@ -126,7 +123,7 @@ export default function ProfilePage() {
         }
 
         loadProfile()
-    }, [params.id, supabase])
+    }, [params.id, supabase, fetchTargetId, isSelf])
 
     // ── Lazy Loading Tabs ────────────────────────────────────────────────────
 
@@ -315,7 +312,7 @@ export default function ProfilePage() {
                             }
 
                             return gridData.map((video) => {
-                                const thumbSource = video.thumbnail_url || (video.video_url.includes('cloudinary.com')
+                                (video.video_url.includes('cloudinary.com')
                                     ? video.video_url.replace('/upload/', '/upload/c_fill,f_auto,q_auto,w_400,h_533/').replace(/\.[^/.]+$/, '.jpg')
                                     : video.video_url);
 
