@@ -1,5 +1,5 @@
 'use client'
-import { Heart, MessageCircle, Share2, Disc3, UserCheck, UserPlus, Bookmark } from 'lucide-react'
+import { Heart, MessageCircle, Share2, UserCheck, UserPlus, Bookmark } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { Video } from '@/types'
 import { ShareModal } from './ShareModal'
@@ -181,13 +181,15 @@ export default function ActionButtons({ video, initialFollowing = false, initial
 
         {/* Avatar — opens zoom modal, follow button overlaid */}
         <div className="relative mb-2 shrink-0">
-          <div className="w-12 h-12 rounded-full border-2 border-white/50 bg-gray-800 hover:border-brand-accent transition-colors overflow-hidden">
-            <ClickableAvatar
-              src={video.users.avatar_url || null}
-              username={video.users.username}
-              className="w-full h-full"
-            />
-          </div>
+          <Link href={`/profile/${video.users.id}`}>
+            <div className="w-12 h-12 rounded-full border-2 border-white/50 bg-gray-800 hover:border-brand-accent transition-colors overflow-hidden">
+              <ClickableAvatar
+                src={video.users.avatar_url || null}
+                username={video.users.username}
+                className="w-full h-full"
+              />
+            </div>
+          </Link>
 
           {/* Follow / Following toggle — hidden on own videos */}
           {!isOwnVideo && (
@@ -259,12 +261,6 @@ export default function ActionButtons({ video, initialFollowing = false, initial
           </div>
         </button>
 
-        {/* Spinning Vinyl */}
-        <div className="mt-4 animate-spin shrink-0" style={{ animationDuration: '4s' }}>
-          <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-gray-900 to-gray-700 p-1 border border-white/20 flex items-center justify-center">
-            <Disc3 size={24} className="text-brand-secondary" />
-          </div>
-        </div>
       </div>
 
       {/* Mobile Comment Drawer */}

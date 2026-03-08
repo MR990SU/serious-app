@@ -1,6 +1,7 @@
 'use client'
 
 import { memo, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { AvatarViewerModal } from './AvatarViewerModal'
 
@@ -15,6 +16,8 @@ interface ClickableAvatarProps {
 
 function ClickableAvatarComponent({ src, username, fallbackText, className = "", hasStory = false, storyViewed = false }: ClickableAvatarProps) {
     const [isOpen, setIsOpen] = useState(false)
+    const pathname = usePathname()
+    const isProfilePage = pathname.startsWith('/profile')
 
     // Fallback logic
     const displayChar = fallbackText || username?.[0]?.toUpperCase() || '?'
@@ -31,9 +34,12 @@ function ClickableAvatarComponent({ src, username, fallbackText, className = "",
             <motion.div
                 whileTap={{ scale: 0.95 }}
                 onClick={(e) => {
-                    e.preventDefault() // prevent navigating if wrapped in a link
-                    e.stopPropagation()
-                    setIsOpen(true)
+                    if (isProfilePage) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setIsOpen(true)
+                    }
+                    // Non-profile pages: let the click propagate to parent <Link>
                 }}
                 className={`cursor-pointer ${ringClass} ${className}`}
                 aria-label={username ? `View ${username}'s avatar` : 'View avatar'}
@@ -53,7 +59,7 @@ function ClickableAvatarComponent({ src, username, fallbackText, className = "",
                 </div>
             </motion.div>
 
-            {isOpen && (
+            {isProfilePage && isOpen && (
                 <AvatarViewerModal
                     isOpen={isOpen}
                     onClose={() => setIsOpen(false)}

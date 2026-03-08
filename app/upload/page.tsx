@@ -1,20 +1,50 @@
 'use client'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { CheckCircle2, UploadCloud, Film, Image as ImageIcon, Music } from 'lucide-react'
+import { CheckCircle2, UploadCloud, Film, Image as ImageIcon, Music, FileAudio } from 'lucide-react'
 import { Audio } from '@/types'
 
+type UploadMode = 'video' | 'image_audio' | 'video_audio'
 type UploadPhase = 'idle' | 'uploading' | 'processing' | 'done' | 'error'
 
+const MODE_CONFIG: Record<UploadMode, { label: string; description: string; icon: React.ReactNode }> = {
+  video: {
+    label: 'Video',
+    description: 'Upload a short video reel',
+    icon: <Film size={16} />,
+  },
+  image_audio: {
+    label: 'Image + Audio',
+    description: 'Static image with a music track',
+    icon: <ImageIcon size={16} />,
+  },
+  video_audio: {
+    label: 'Video + Audio',
+    description: 'Video with an audio overlay (video muted)',
+    icon: <FileAudio size={16} />,
+  },
+}
+
+const ALLOWED_VIDEO = ['video/mp4', 'video/quicktime', 'video/webm']
+const ALLOWED_PHOTO = ['image/jpeg', 'image/png', 'image/webp']
+const ALLOWED_AUDIO = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/aac']
+const MAX_SIZE_BYTES = 100 * 1024 * 1024 // 100MB
+
 export default function UploadPage() {
-  const [file, setFile] = useState<File | null>(null)
-  const [mediaType, setMediaType] = useState<'video' | 'photo'>('video')
+  const [uploadMode, setUploadMode] = useState<UploadMode>('video')
+
+  // Per-slot file state
+  const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [audioFile, setAudioFile] = useState<File | null>(null)
+
   const [caption, setCaption] = useState('')
   const [phase, setPhase] = useState<UploadPhase>('idle')
   const [error, setError] = useState('')
+  const [progress, setProgress] = useState(0)
 
-  // Audio selection
+  // Audio library selection (for image_audio mode only)
   const [audioList, setAudioList] = useState<Audio[]>([])
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null)
   const [isAudioDrawerOpen, setIsAudioDrawerOpen] = useState(false)
@@ -22,12 +52,7 @@ export default function UploadPage() {
   const supabase = createClient()
   const router = useRouter()
 
-  const ALLOWED_VIDEO = ['video/mp4', 'video/quicktime', 'video/webm']
-  const ALLOWED_PHOTO = ['image/jpeg', 'image/png', 'image/webp']
-  const MAX_SIZE_BYTES = 100 * 1024 * 1024 // 100MB
-
   useEffect(() => {
-    // Load available audio tracks
     const fetchAudio = async () => {
       const { data } = await supabase.from('audio').select('*').order('used_count', { ascending: false })
       if (data) setAudioList(data)
@@ -35,65 +60,123 @@ export default function UploadPage() {
     fetchAudio()
   }, [supabase])
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Reset file selections when mode changes
+  const handleModeChange = (mode: UploadMode) => {
+    setUploadMode(mode)
+    setVideoFile(null)
+    setImageFile(null)
+    setAudioFile(null)
+    setSelectedAudioId(null)
+    setError('')
+    setPhase('idle')
+  }
+
+  const pickFile = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    slot: 'video' | 'image' | 'audio'
+  ) => {
     const selected = e.target.files?.[0] || null
+    // Reset input so same file can be re-selected
+    e.target.value = ''
     if (!selected) return
 
-    const isVideo = ALLOWED_VIDEO.includes(selected.type)
-    const isPhoto = ALLOWED_PHOTO.includes(selected.type)
-
-    if (!isVideo && !isPhoto) {
-      setError('Only MP4, MOV, WebM videos or JPG, PNG photos are supported.')
-      return
-    }
     if (selected.size > MAX_SIZE_BYTES) {
       setError('File must be under 100MB.')
       return
     }
 
-    setMediaType(isVideo ? 'video' : 'photo')
+    if (slot === 'video' && !ALLOWED_VIDEO.includes(selected.type)) {
+      setError('Video must be MP4, MOV, or WebM.')
+      return
+    }
+    if (slot === 'image' && !ALLOWED_PHOTO.includes(selected.type)) {
+      setError('Image must be JPG, PNG, or WebP.')
+      return
+    }
+    if (slot === 'audio' && !ALLOWED_AUDIO.includes(selected.type)) {
+      setError('Audio must be MP3, WAV, OGG, or AAC.')
+      return
+    }
+
     setError('')
-    setPhase('idle')
-    setFile(selected)
+    if (slot === 'video') setVideoFile(selected)
+    if (slot === 'image') setImageFile(selected)
+    if (slot === 'audio') setAudioFile(selected)
   }
 
-  // --- Generate Thumbnail via Canvas ---
-  const generateVideoThumbnail = (videoFile: File): Promise<Blob> => {
+  const generateVideoThumbnail = (vFile: File): Promise<Blob> => {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video')
       video.autoplay = true
       video.muted = true
       video.playsInline = true
-      const url = URL.createObjectURL(videoFile)
+      const url = URL.createObjectURL(vFile)
       video.src = url
 
       video.onloadeddata = () => {
-        video.currentTime = Math.min(1, video.duration / 2) // Seek to 1s or middle
+        video.currentTime = Math.min(1, video.duration / 2)
       }
-
       video.onseeked = () => {
         const canvas = document.createElement('canvas')
         canvas.width = video.videoWidth
         canvas.height = video.videoHeight
-        const ctx = canvas.getContext('2d')
-        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
-
+        canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
         canvas.toBlob(blob => {
           URL.revokeObjectURL(url)
           if (blob) resolve(blob)
           else reject(new Error('Failed to generate thumbnail'))
         }, 'image/jpeg', 0.8)
       }
-
-      video.onerror = () => {
-        URL.revokeObjectURL(url)
-        reject(new Error('Error loading video file for thumbnail'))
-      }
+      video.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Error loading video')) }
     })
   }
 
+  const uploadToStorage = async (file: File, path: string): Promise<string> => {
+    // Step 1: Get a signed upload URL from Supabase
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from('reels-media')
+      .createSignedUploadUrl(path)
+    if (signedError || !signedData) throw signedError ?? new Error('Failed to get signed URL')
+
+    const { signedUrl, token } = signedData
+
+    // Step 2: XHR PUT to the signed URL — exposes onprogress events
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('PUT', signedUrl)
+      xhr.setRequestHeader('x-upsert', 'false')
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100))
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve()
+        else reject(new Error(`Upload failed: ${xhr.status} — ${xhr.responseText}`))
+      }
+
+      xhr.onerror = () => reject(new Error('Network error during upload'))
+      xhr.send(file)
+    })
+
+    // Step 3: Retrieve the public URL
+    return supabase.storage.from('reels-media').getPublicUrl(path).data.publicUrl
+  }
+
+  const validate = (): string | null => {
+    if (!caption.trim()) return 'Caption is required.'
+    if (uploadMode === 'video' && !videoFile) return 'A video file is required.'
+    if (uploadMode === 'image_audio' && !imageFile) return 'An image file is required.'
+    if (uploadMode === 'image_audio' && !audioFile && !selectedAudioId) return 'An audio track or library audio is required.'
+    if (uploadMode === 'video_audio' && !videoFile) return 'A video file is required.'
+    if (uploadMode === 'video_audio' && !audioFile) return 'An audio file is required for Video + Audio mode.'
+    return null
+  }
+
   const handleUpload = async () => {
-    if (!file || !caption.trim()) return
+    const validationError = validate()
+    if (validationError) { setError(validationError); return }
+
     setError('')
     setPhase('uploading')
 
@@ -101,55 +184,79 @@ export default function UploadPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not authenticated')
 
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${user.id}/${Date.now()}.${fileExt}`
+      const ts = Date.now()
+      let videoUrl: string | null = null
+      let imageUrl: string | null = null
+      let audioUrl: string | null = null
+      let thumbnailUrl: string | null = null
+      let audioId: string | null = selectedAudioId
 
-      // 1. Upload Media
-      const { error: uploadError } = await supabase.storage
-        .from('reels-media')
-        .upload(fileName, file, { cacheControl: '3600', upsert: false })
+      // ── Video only ──────────────────────────────────────
+      if (uploadMode === 'video') {
+        const ext = videoFile!.name.split('.').pop()
+        videoUrl = await uploadToStorage(videoFile!, `${user.id}/${ts}.${ext}`)
 
-      if (uploadError) throw uploadError
-
-      const { data: { publicUrl: mediaUrl } } = supabase.storage
-        .from('reels-media')
-        .getPublicUrl(fileName)
-
-      // 2. Upload / Generate Thumbnail
-      setPhase('processing')
-      let thumbnailUrl = mediaUrl // Default to self for photos
-
-      if (mediaType === 'video') {
+        setPhase('processing')
         try {
-          const thumbBlob = await generateVideoThumbnail(file)
-          const thumbName = `${user.id}/${Date.now()}_thumb.jpg`
+          const thumbBlob = await generateVideoThumbnail(videoFile!)
+          thumbnailUrl = await uploadToStorage(
+            new File([thumbBlob], 'thumb.jpg', { type: 'image/jpeg' }),
+            `${user.id}/${ts}_thumb.jpg`
+          )
+        } catch { /* soft fail */ }
+      }
 
-          const { error: thumbErr } = await supabase.storage
-            .from('reels-media')
-            .upload(thumbName, thumbBlob, { contentType: 'image/jpeg' })
+      // ── Image + Audio ───────────────────────────────────
+      if (uploadMode === 'image_audio') {
+        const imgExt = imageFile!.name.split('.').pop()
+        imageUrl = await uploadToStorage(imageFile!, `${user.id}/${ts}_img.${imgExt}`)
+        thumbnailUrl = imageUrl // image IS the thumbnail
 
-          if (!thumbErr) {
-            const { data: thumbData } = supabase.storage
-              .from('reels-media')
-              .getPublicUrl(thumbName)
-            thumbnailUrl = thumbData.publicUrl
-          }
-        } catch (e) {
-          console.warn('Thumbnail generation failed, falling back to empty/default', e)
-          // Soft fail: keep default
+        if (audioFile) {
+          const audExt = audioFile.name.split('.').pop()
+          audioUrl = await uploadToStorage(audioFile, `${user.id}/${ts}_audio.${audExt}`)
         }
       }
 
-      // 3. Save to database
-      const { error: dbError } = await supabase.from('videos').insert({
-        user_id: user.id,
-        video_url: mediaUrl,
-        media_type: mediaType,
-        thumbnail_url: thumbnailUrl,
-        audio_id: selectedAudioId,
-        caption: caption.trim()
-      })
+      // ── Video + Audio (video muted) ──────────────────────
+      if (uploadMode === 'video_audio') {
+        const vExt = videoFile!.name.split('.').pop()
+        videoUrl = await uploadToStorage(videoFile!, `${user.id}/${ts}.${vExt}`)
 
+        const audExt = audioFile!.name.split('.').pop()
+        audioUrl = await uploadToStorage(audioFile!, `${user.id}/${ts}_audio.${audExt}`)
+
+        setPhase('processing')
+        try {
+          const thumbBlob = await generateVideoThumbnail(videoFile!)
+          thumbnailUrl = await uploadToStorage(
+            new File([thumbBlob], 'thumb.jpg', { type: 'image/jpeg' }),
+            `${user.id}/${ts}_thumb.jpg`
+          )
+        } catch { /* soft fail */ }
+      }
+
+      // ── DB insert ───────────────────────────────────────
+      const dbPayload: Record<string, unknown> = {
+        user_id: user.id,
+        caption: caption.trim(),
+        upload_mode: uploadMode,
+        media_type: uploadMode === 'image_audio' ? 'photo' : 'video',
+        thumbnail_url: thumbnailUrl,
+        audio_id: audioId,
+      }
+
+      if (videoUrl) dbPayload.video_url = videoUrl
+      if (imageUrl) dbPayload.image_url = imageUrl
+      if (audioUrl) dbPayload.audio_url = audioUrl
+
+      // video_audio mode: flag that video audio should be suppressed
+      if (uploadMode === 'video_audio') dbPayload.mute_video_audio = true
+
+      // Ensure video_url is set to image_url for photo posts so existing feed code works
+      if (uploadMode === 'image_audio') dbPayload.video_url = imageUrl
+
+      const { error: dbError } = await supabase.from('videos').insert(dbPayload)
       if (dbError) throw dbError
 
       setPhase('done')
@@ -163,6 +270,7 @@ export default function UploadPage() {
   }
 
   const isUploading = phase === 'uploading' || phase === 'processing'
+  const selectedAudioInfo = audioList.find(a => a.id === selectedAudioId)
 
   const phaseLabel: Record<UploadPhase, string> = {
     idle: 'Post to Feed',
@@ -172,8 +280,6 @@ export default function UploadPage() {
     error: 'Retry',
   }
 
-  const selectedAudioInfo = audioList.find(a => a.id === selectedAudioId)
-
   return (
     <div className="p-6 pt-10 text-white h-full overflow-y-auto pb-24">
       <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
@@ -181,91 +287,128 @@ export default function UploadPage() {
       </h1>
 
       <div className="space-y-4 max-w-lg">
-        {/* File picker */}
-        <div className={`relative border-2 border-dashed rounded-xl p-6 text-center transition-colors ${file ? 'border-brand-accent/40 bg-brand-accent/5' : 'border-white/20 hover:border-white/40'}`}>
-          <input
-            type="file"
-            accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp"
-            onChange={handleFileChange}
-            disabled={isUploading}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:opacity-0"
-          />
 
-          {!file && (
-            <div className="flex flex-col items-center gap-2 pointer-events-none">
-              <UploadCloud size={32} className="text-gray-400" />
-              <span className="font-medium text-gray-300">Tap to select media</span>
-            </div>
-          )}
-
-          <p className="text-xs text-gray-500 mt-3 pointer-events-none">Videos (MP4/MOV) or Photos (JPG/PNG) · Max 100MB</p>
-          {file && (
-            <p className="text-sm text-green-400 mt-3 font-medium flex items-center justify-center gap-2 pointer-events-none">
-              {mediaType === 'photo' ? <ImageIcon size={16} /> : <Film size={16} />}
-              {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
-            </p>
-          )}
-        </div>
-
-        {/* Audio Selector */}
-        <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setIsAudioDrawerOpen(!isAudioDrawerOpen)}
-            className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-gray-800 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div className="bg-white/10 p-2 rounded-full">
-                <Music size={18} className="text-brand-accent" />
-              </div>
-              <div className="text-left">
-                <p className="font-semibold text-sm">
-                  {selectedAudioInfo ? selectedAudioInfo.title : 'Add Audio'}
-                </p>
-                <p className="text-xs text-gray-400">
-                  {selectedAudioInfo ? selectedAudioInfo.artist : 'Select a track for your reel'}
-                </p>
-              </div>
-            </div>
-            <span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-full text-white/80">
-              {selectedAudioId ? 'Change' : 'Browse'}
-            </span>
-          </button>
-
-          {/* Audio List Drawer */}
-          {isAudioDrawerOpen && (
-            <div className="border-t border-gray-800 bg-gray-950 p-2 max-h-60 overflow-y-auto">
+        {/* ── Mode Selector ── */}
+        <div>
+          <p className="text-xs text-gray-400 font-semibold mb-2 uppercase tracking-widest">Upload Mode</p>
+          <div className="grid grid-cols-3 gap-2">
+            {(Object.entries(MODE_CONFIG) as [UploadMode, typeof MODE_CONFIG[UploadMode]][]).map(([mode, cfg]) => (
               <button
-                onClick={() => { setSelectedAudioId(null); setIsAudioDrawerOpen(false); }}
-                className={`w-full text-left p-3 rounded-lg text-sm mb-1 ${!selectedAudioId ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800'}`}
+                key={mode}
+                type="button"
+                onClick={() => handleModeChange(mode)}
+                disabled={isUploading}
+                className={`flex flex-col items-center gap-1 p-3 rounded-xl border text-xs font-semibold transition-all ${uploadMode === mode
+                  ? 'border-brand-accent bg-brand-accent/10 text-brand-accent'
+                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:border-gray-500'
+                  }`}
               >
-                Original Audio (None)
+                {cfg.icon}
+                <span>{cfg.label}</span>
               </button>
-              {audioList.map(audio => (
-                <button
-                  key={audio.id}
-                  onClick={() => { setSelectedAudioId(audio.id); setIsAudioDrawerOpen(false); }}
-                  className={`w-full text-left p-3 rounded-lg text-sm mb-1 flex justify-between items-center ${selectedAudioId === audio.id ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800 text-white'}`}
-                >
-                  <div>
-                    <p className="font-bold">{audio.title}</p>
-                    <p className="text-xs opacity-70">{audio.artist}</p>
-                  </div>
-                  <span className="text-xs opacity-50">{audio.used_count.toLocaleString()} posts</span>
-                </button>
-              ))}
-              {audioList.length === 0 && (
-                <div className="p-4 text-center text-sm text-gray-500">No audio tracks available. Add them to the database first.</div>
-              )}
-            </div>
-          )}
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-1.5">{MODE_CONFIG[uploadMode].description}</p>
         </div>
+
+        {/* ── File Slots ── */}
+
+        {/* Video slot — modes: video, video_audio */}
+        {(uploadMode === 'video' || uploadMode === 'video_audio') && (
+          <FileSlot
+            label="Video"
+            icon={<Film size={16} />}
+            accept="video/mp4,video/quicktime,video/webm"
+            file={videoFile}
+            onPick={e => pickFile(e, 'video')}
+            disabled={isUploading}
+          />
+        )}
+
+        {/* Image slot — mode: image_audio */}
+        {uploadMode === 'image_audio' && (
+          <FileSlot
+            label="Image"
+            icon={<ImageIcon size={16} />}
+            accept="image/jpeg,image/png,image/webp"
+            file={imageFile}
+            onPick={e => pickFile(e, 'image')}
+            disabled={isUploading}
+          />
+        )}
+
+        {/* Audio file slot — mode: video_audio */}
+        {uploadMode === 'video_audio' && (
+          <FileSlot
+            label="Audio File"
+            icon={<FileAudio size={16} />}
+            accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/aac"
+            file={audioFile}
+            onPick={e => pickFile(e, 'audio')}
+            disabled={isUploading}
+          />
+        )}
+
+        {/* Audio library drawer — modes: video (optional), image_audio */}
+        {(uploadMode === 'image_audio' || uploadMode === 'video') && (
+          <div className="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setIsAudioDrawerOpen(!isAudioDrawerOpen)}
+              className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-gray-800 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="bg-white/10 p-2 rounded-full">
+                  <Music size={18} className="text-brand-accent" />
+                </div>
+                <div className="text-left">
+                  <p className="font-semibold text-sm">
+                    {selectedAudioInfo ? selectedAudioInfo.title : 'Add Audio'}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {selectedAudioInfo ? selectedAudioInfo.artist : 'Select a track from the library'}
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-full text-white/80">
+                {selectedAudioId ? 'Change' : 'Browse'}
+              </span>
+            </button>
+
+            {isAudioDrawerOpen && (
+              <div className="border-t border-gray-800 bg-gray-950 p-2 max-h-60 overflow-y-auto">
+                <button
+                  onClick={() => { setSelectedAudioId(null); setIsAudioDrawerOpen(false) }}
+                  className={`w-full text-left p-3 rounded-lg text-sm mb-1 ${!selectedAudioId ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800'}`}
+                >
+                  Original Audio (None)
+                </button>
+                {audioList.map(audio => (
+                  <button
+                    key={audio.id}
+                    onClick={() => { setSelectedAudioId(audio.id); setIsAudioDrawerOpen(false) }}
+                    className={`w-full text-left p-3 rounded-lg text-sm mb-1 flex justify-between items-center ${selectedAudioId === audio.id ? 'bg-brand-accent/20 text-brand-accent border border-brand-accent/30' : 'hover:bg-gray-800 text-white'}`}
+                  >
+                    <div>
+                      <p className="font-bold">{audio.title}</p>
+                      <p className="text-xs opacity-70">{audio.artist}</p>
+                    </div>
+                    <span className="text-xs opacity-50">{audio.used_count.toLocaleString()} posts</span>
+                  </button>
+                ))}
+                {audioList.length === 0 && (
+                  <div className="p-4 text-center text-sm text-gray-500">No audio tracks available.</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Caption */}
         <textarea
           placeholder="Write a caption..."
           value={caption}
-          onChange={(e) => setCaption(e.target.value)}
+          onChange={e => setCaption(e.target.value)}
           disabled={isUploading}
           className="w-full bg-gray-900 border border-gray-700 rounded-xl p-3 text-white resize-none focus:outline-none focus:border-brand-accent transition-colors disabled:opacity-50"
           rows={3}
@@ -293,24 +436,69 @@ export default function UploadPage() {
               </div>
             )}
             {isUploading && (
-              <div className="w-full bg-gray-800 h-2 rounded-full overflow-hidden">
-                <div className="bg-brand-accent h-full w-1/2 animate-pulse rounded-full" />
+              <div className="space-y-1">
+                <div className="w-full bg-gray-800 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-brand-accent h-full rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 text-right">{progress}%</p>
               </div>
             )}
           </div>
         )}
 
-        {/* Action buttons */}
+        {/* Submit */}
         <div className="flex gap-3">
           <button
             onClick={handleUpload}
-            disabled={isUploading || !file || !caption.trim() || phase === 'done'}
+            disabled={isUploading || phase === 'done'}
             className="flex-1 bg-gradient-to-r from-brand-primary to-brand-accent py-4 rounded-xl font-bold disabled:opacity-50 hover:opacity-90 transition-opacity flex items-center justify-center gap-2 shadow-lg shadow-brand-accent/20"
           >
             <UploadCloud size={20} />
             {phaseLabel[phase]}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Reusable file slot sub-component ──────────────────────────────────────────
+
+interface FileSlotProps {
+  label: string
+  icon: React.ReactNode
+  accept: string
+  file: File | null
+  onPick: (e: React.ChangeEvent<HTMLInputElement>) => void
+  disabled: boolean
+}
+
+function FileSlot({ label, icon, accept, file, onPick, disabled }: FileSlotProps) {
+  return (
+    <div>
+      <p className="text-xs text-gray-400 font-semibold mb-1.5 uppercase tracking-widest">{label}</p>
+      <div className={`relative border-2 border-dashed rounded-xl p-5 text-center transition-colors ${file ? 'border-brand-accent/40 bg-brand-accent/5' : 'border-white/20 hover:border-white/40'}`}>
+        <input
+          type="file"
+          accept={accept}
+          onChange={onPick}
+          disabled={disabled}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+        />
+        {!file ? (
+          <div className="flex flex-col items-center gap-1.5 pointer-events-none text-gray-400">
+            {icon}
+            <span className="text-sm font-medium">Tap to select {label.toLowerCase()}</span>
+          </div>
+        ) : (
+          <p className="text-sm text-green-400 font-medium flex items-center justify-center gap-2 pointer-events-none">
+            {icon}
+            {file.name} <span className="text-gray-400">({(file.size / 1024 / 1024).toFixed(1)} MB)</span>
+          </p>
+        )}
       </div>
     </div>
   )

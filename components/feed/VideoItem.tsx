@@ -1,13 +1,15 @@
 'use client'
 import { useRef, useEffect, useState, memo } from 'react'
+import { useDoubleTap } from 'use-double-tap'
 import { useInView } from 'react-intersection-observer'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Video } from '@/types'
 import { useVideoStore } from '@/lib/store/useVideoStore'
 import ActionButtons from './ActionButtons'
 import Link from 'next/link'
 import Image from 'next/image'
 import { getOptimizedVideoUrl, getOptimizedPosterUrl } from '@/lib/utils/video-utils'
-import { Music, Volume2, VolumeX, Disc3 } from 'lucide-react'
+import { Music, Volume2, VolumeX } from 'lucide-react'
 import { incrementViewCount, toggleLike } from '@/app/actions/video-actions'
 import { HeartAnimation } from '@/components/ui/HeartAnimation'
 import { createClient } from '@/lib/supabase/client'
@@ -21,14 +23,19 @@ interface Props {
 export default memo(function VideoItem({ video, index, initialFollowing = false }: Props) {
   const { setActiveVideo } = useVideoStore()
   const videoRef = useRef<HTMLVideoElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [isExpanded, setIsExpanded] = useState(false)
-  const [isMuted, setIsMuted] = useState(index === 0)  // first video starts muted for autoplay compliance
+  const [isMuted, setIsMuted] = useState(index === 0) // first video starts muted for autoplay compliance
 
-  // Like states
+  // Like state
   const [heartTrigger, setHeartTrigger] = useState(0)
-  const lastTapRef = useRef(0)
   const [isLiked, setIsLiked] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
+
+  // Sound indicator
+  const [showSoundIndicator, setShowSoundIndicator] = useState(false)
+  const soundTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const viewLogged = useRef(false)
   const supabase = createClient()
 
@@ -46,10 +53,11 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
     triggerOnce: false
   })
 
-  // Set merged refs
+  // Merge all three refs onto the same inner div
   const setRefs = (el: HTMLDivElement | null) => {
     viewRef(el)
     loadRef(el)
+      ; (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el
   }
 
   // Determine active preload strategy
@@ -61,6 +69,7 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
       ? 'metadata'
       : 'none'
 
+  // Hydrate like state
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) {
@@ -92,22 +101,22 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
     }
   }
 
-  const handleTapSequence = (e: React.MouseEvent | React.TouchEvent) => {
-    e.stopPropagation()
-    const now = Date.now()
-    if (now - lastTapRef.current < 300) {
-      handleDoubleTap()
-    } else {
-      setTimeout(() => {
-        const latest = Date.now()
-        if (latest - lastTapRef.current >= 300) {
-          toggleMute()
-        }
-      }, 300)
-    }
-    lastTapRef.current = now
+  // Toggle mute + show 800ms sound overlay
+  const toggleMute = () => {
+    setIsMuted(prev => !prev)
+    if (soundTimerRef.current) clearTimeout(soundTimerRef.current)
+    setShowSoundIndicator(true)
+    soundTimerRef.current = setTimeout(() => setShowSoundIndicator(false), 800)
   }
 
+  // Double tap = like | Single tap = mute toggle
+  const tapBind = useDoubleTap(
+    () => { handleDoubleTap() },   // double tap
+    300,
+    { onSingleTap: () => toggleMute() } // single tap
+  )
+
+  // Playback control
   useEffect(() => {
     if (video.media_type === 'photo') {
       if (isPlaying) {
@@ -130,12 +139,12 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
       }
       const playPromise = videoRef.current.play()
       if (playPromise !== undefined) {
-        playPromise.catch(error => {
+        playPromise.catch((error: { name: string }) => {
           if (error.name === 'NotAllowedError') {
             setIsMuted(true)
             if (videoRef.current) {
               videoRef.current.muted = true
-              videoRef.current.play().catch(e => console.error('Fallback playback failed', e))
+              videoRef.current.play().catch((e: unknown) => console.error('Fallback playback failed', e))
             }
           }
         })
@@ -149,21 +158,14 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
   const optimizedVideoUrl = getOptimizedVideoUrl(video.video_url)
   const optimizedPosterUrl = getOptimizedPosterUrl(video.video_url)
 
-  const toggleMute = () => {
-    setIsMuted(prev => !prev)
-  }
-
+  // Auto-advance to next reel on video end
   const handleNextVideo = () => {
-    if (useVideoStore.getState().autoPlayEnabled && videoRef.current) {
-      const parent = videoRef.current.closest('.snap-start')
-      const nextSibling = parent?.nextElementSibling as HTMLElement
-      if (nextSibling) {
-        nextSibling.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-    }
+    if (!useVideoStore.getState().autoPlayEnabled) return
+    const next = containerRef.current?.parentElement?.nextElementSibling as HTMLElement | null
+    if (next) next.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  // Unmount cleanup logic (critical for virtualization)
+  // Unmount cleanup
   useEffect(() => {
     const vEl = videoRef.current
     return () => {
@@ -176,7 +178,6 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
   }, [])
 
   return (
-    // Each item must occupy exactly one viewport — overflow-hidden prevents bleed on partial scroll
     <div className="h-[100dvh] max-h-[100dvh] w-full snap-start relative bg-black overflow-hidden md:rounded-3xl md:my-4 md:h-[calc(100dvh-2rem)] md:max-h-[calc(100dvh-2rem)] md:border md:border-white/5 transition-all duration-300 shadow-2xl flex-shrink-0">
       <div ref={setRefs} className="h-full w-full relative">
 
@@ -188,8 +189,7 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
 
         {/* Poster overlay — fades out once video data is buffered */}
         <div
-          className={`absolute inset-0 z-[11] bg-cover bg-center transition-opacity duration-500 pointer-events-none ${videoReady ? 'opacity-0' : 'opacity-100'
-            }`}
+          className={`absolute inset-0 z-[11] bg-cover bg-center transition-opacity duration-500 pointer-events-none ${videoReady ? 'opacity-0' : 'opacity-100'}`}
           style={{ backgroundImage: `url(${optimizedPosterUrl})` }}
         />
 
@@ -202,30 +202,21 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
             unoptimized={video.video_url.includes('supabase.co')}
           />
         ) : shouldMountVideo ? (
-          <>
-            <video
-              ref={videoRef}
-              src={optimizedVideoUrl}
-              poster={optimizedPosterUrl}
-              className="h-full w-full object-cover relative z-10"
-              loop
-              playsInline
-              muted={isMuted}
-              preload={preloadStrategy}
-              controlsList="nodownload"
-              onLoadedData={() => setVideoReady(true)}
-              onClick={handleTapSequence}
-              onEnded={handleNextVideo}
-              onContextMenu={(e) => e.preventDefault()}
-            />
-            {/* Mute Toggle — moved below z-50 top nav to prevent overlap */}
-            <button
-              onClick={toggleMute}
-              className="absolute top-16 right-4 z-20 p-2 bg-black/40 backdrop-blur-md rounded-full text-white/80 hover:text-white transition-colors"
-            >
-              {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-            </button>
-          </>
+          <video
+            ref={videoRef}
+            src={optimizedVideoUrl}
+            poster={optimizedPosterUrl}
+            className="h-full w-full object-cover relative z-10"
+            loop
+            playsInline
+            muted={isMuted}
+            preload={preloadStrategy}
+            controlsList="nodownload"
+            onLoadedData={() => setVideoReady(true)}
+            onClick={tapBind.onClick}
+            onEnded={handleNextVideo}
+            onContextMenu={e => e.preventDefault()}
+          />
         ) : (
           <div
             className="h-full w-full relative z-10 bg-cover bg-center"
@@ -236,10 +227,29 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
         {/* Heart Overlay */}
         <HeartAnimation triggerTimestamp={heartTrigger} />
 
+        {/* Sound indicator overlay — Instagram style */}
+        <AnimatePresence mode="wait">
+          {showSoundIndicator && (
+            <motion.div
+              key={isMuted ? 'muted' : 'unmuted'}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none"
+            >
+              {isMuted
+                ? <VolumeX size={64} className="text-white drop-shadow-lg" />
+                : <Volume2 size={64} className="text-white drop-shadow-lg" />
+              }
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Bottom gradient overlay */}
         <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/80 via-black/40 to-transparent z-10 pointer-events-none" />
 
-        {/* Caption & User — Fixed: now shows username instead of UUID substring */}
+        {/* Caption & User */}
         <div className="absolute bottom-[80px] md:bottom-8 left-4 right-20 z-20">
           <Link href={`/profile/${video.users.id}`} prefetch className="font-bold text-lg hover:underline flex items-center gap-2 mb-2">
             @{video.users.username}
@@ -256,19 +266,10 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
           </div>
 
           <div className="flex items-center gap-3 mt-4 w-full">
-            {/* Rotating Audio Disk */}
-            <Link
-              href={video.audio_id ? `/audio/${video.audio_id}` : '#'}
-              className={`shrink-0 w-10 h-10 rounded-full bg-gray-800 border-2 border-gray-600 flex items-center justify-center overflow-hidden z-30 transition-transform hover:scale-110 animate-spin [animation-duration:4s] ${!isPlaying && '[animation-play-state:paused]'}`}
-            >
-              <Disc3 size={20} className="text-white relative z-10" />
-              <div className="absolute inset-0 bg-gradient-to-br from-gray-700 to-black opacity-50" />
-            </Link>
-
             {/* Scrolling Music Track */}
             <Link
               href={video.audio_id ? `/audio/${video.audio_id}` : '#'}
-              className="flex items-center gap-2 text-sm font-semibold text-white/80 overflow-hidden rounded-full px-3 py-1.5 glass flex-1 max-w-[200px]"
+              className="flex items-center gap-2 text-sm font-semibold text-white/80 overflow-hidden rounded-full px-3 py-1.5 glass flex-1 max-w-[220px]"
             >
               <Music size={14} className="shrink-0 text-brand-secondary" />
               <div className="whitespace-nowrap overflow-hidden relative w-full">
@@ -282,6 +283,6 @@ export default memo(function VideoItem({ video, index, initialFollowing = false 
 
         <ActionButtons video={video} initialFollowing={initialFollowing} />
       </div>
-    </div >
+    </div>
   )
 })

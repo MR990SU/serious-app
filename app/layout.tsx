@@ -6,6 +6,7 @@ import TopNav from '@/components/nav/TopNav'
 import SideNav from '@/components/nav/SideNav'
 import RightNav from '@/components/nav/RightNav'
 import { AuthProvider } from '@/components/AuthProvider'
+import SwipeNavigator from '@/components/navigation/SwipeNavigator'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -46,7 +47,9 @@ export default function RootLayout({
 
             {/* Center Main Area */}
             <main className="flex-1 relative bg-black h-[100dvh] w-full max-w-[100vw] overflow-hidden">
-              {children}
+              <SwipeNavigator>
+                {children}
+              </SwipeNavigator>
             </main>
 
             {/* Desktop Right Nav */}
